@@ -43,16 +43,41 @@ export const generalHelp = defineAgentIntent<GeneralHelpArgs, GeneralHelpCapture
   // leverantörer skulder jag mest?", "hur ser min momsrapport ut?") that
   // require actually reading bookkeeping data, not just regulatory atoms.
   //
-  // Tool whitelist is therefore comprehensive on the READ side. Write tools
-  // (categorize, create_invoice, approve_supplier_invoice, stage_year_end,
-  // …) deliberately stay out: those belong to the page-specific intents
-  // where the agent has a single entity in focus and the user expects a
-  // staged ApprovalCard. From /chat the agent redirects users to the right
-  // page for write actions instead of trying to do them inline.
+  // Tool whitelist is comprehensive on the READ side. Fork change
+  // (bok.dalavs.se, 2026-09-16, decision B-S21): the everyday WRITE tools are
+  // whitelisted here too, so the general chat can act on a request ("bokför
+  // kvittot", "skapa en faktura till X") instead of only pointing at a page.
+  // Every write tool stages a pending_operation and renders an ApprovalCard;
+  // the human still approves each one (gnubok_approve_pending_operation is
+  // deliberately NOT here, so nothing commits from chat without a click).
+  // Year-end, period locks and settings stay on their dedicated pages.
   //
   // Anthropic caches the tools list with the system prompt so a stable
   // whitelist costs nothing per turn after first warm-up.
   tools: [
+    // Write (staged, user approves in the ApprovalCard)
+    'gnubok_categorize_transaction',
+    'gnubok_match_transaction_to_invoice',
+    'gnubok_ignore_transaction',
+    'gnubok_bulk_book_transactions',
+    'gnubok_create_voucher',
+    'gnubok_correct_entry',
+    'gnubok_reverse_journal_entry',
+    'gnubok_set_voucher_note',
+    'gnubok_link_document_to_voucher',
+    'gnubok_attach_document_to_transaction',
+    'gnubok_bulk_book_inbox_items',
+    'gnubok_create_supplier_invoice_from_inbox',
+    'gnubok_approve_supplier_invoice',
+    'gnubok_create_invoice',
+    'gnubok_update_invoice',
+    'gnubok_send_invoice',
+    'gnubok_mark_invoice_as_sent',
+    'gnubok_mark_invoice_as_paid',
+    'gnubok_credit_invoice',
+    'gnubok_create_customer',
+    'gnubok_create_supplier',
+    'gnubok_create_article',
     // Knowledge + memory
     'gnubok_search_tools',
     'gnubok_list_skills',
@@ -122,11 +147,13 @@ export const generalHelp = defineAgentIntent<GeneralHelpArgs, GeneralHelpCapture
     lines.push('- Söka i journalen efter motpart, beskrivning eller belopp via gnubok_query_journal (t.ex. "har jag bokfört detta förut?").')
     lines.push('- Komma ihåg fakta om bolaget via gnubok_remember_fact / gnubok_forget_fact.')
     lines.push('')
-    lines.push('Du har INGA skrivverktyg härifrån: du kan läsa och resonera, men inte kategorisera, fakturera, attestera eller stage:a bokslut, och du ska INTE låtsas att du kan.')
+    lines.push('- UTFÖRA uppgifter som förslag användaren godkänner: kategorisera och bokföra banktransaktioner (gnubok_categorize_transaction, gnubok_match_transaction_to_invoice, gnubok_ignore_transaction, gnubok_bulk_book_transactions), bokföra underlag ur dokumentinkorgen (gnubok_bulk_book_inbox_items, gnubok_create_supplier_invoice_from_inbox, gnubok_approve_supplier_invoice), skapa och rätta verifikationer (gnubok_create_voucher, gnubok_correct_entry, gnubok_reverse_journal_entry, gnubok_set_voucher_note, gnubok_link_document_to_voucher, gnubok_attach_document_to_transaction), kundfakturor (gnubok_create_invoice, gnubok_update_invoice, gnubok_send_invoice, gnubok_mark_invoice_as_sent, gnubok_mark_invoice_as_paid, gnubok_credit_invoice) och register (gnubok_create_customer, gnubok_create_supplier, gnubok_create_article). Varje sådant anrop skapar ett förslag som visas som ett godkännandekort under ditt svar; ingenting bokförs förrän användaren klickar Godkänn.')
     lines.push('')
-    lines.push('KATEGORISERING / BOKFÖRING: så här hanterar du det (vanligaste fallet): Om användaren ber dig kategorisera, bokföra eller "gå igenom" okategoriserade transaktioner, ge då INTE per-transaktions-bokföringsförslag (konto/momsbehandling) i löptext, och fråga ALDRIG "godkänner du dessa?". Två skäl: (1) du ser inte det matchade underlaget (kvitto/faktura) per transaktion härifrån, så förslaget vilar på gissningar; (2) du kan inte stagea någon bokning: det blir en analys användaren inte kan agera på. Hänvisa istället tydligt: "Själva kategoriseringen gör vi i Dokumentinkorgen: lägg kvittot/fakturan där (eller vidarebefordra det till företagets inbox-adress), matcha det mot transaktionen och fråga assistenten därifrån: då ser jag underlaget som hör till transaktionen och lägger ett förslag du godkänner direkt i kortet." Du FÅR ge en kort överblick (hur många som väntar, vilka de äldsta är, vilka som ser kluriga ut) för att hjälpa användaren prioritera, men stanna där, gå inte vidare till konto/moms per rad.')
+    lines.push('ARBETSGÅNG FÖR SKRIVÅTGÄRDER: (1) Hämta det du behöver först: transaktionen via gnubok_list_uncategorized_transactions eller gnubok_query_journal, underlaget via gnubok_list_inbox_items och gnubok_get_document_content, kund eller leverantör via gnubok_list_customers / gnubok_list_suppliers. (2) Kolla hur motparten bokförts förut med gnubok_query_journal({ text: "<motpart>", limit: 5 }) och följ mönstret om inte underlaget säger annat. (3) Om något är oklart (syfte, deltagare vid representation, belopp som inte stämmer, saknat underlag) ställ EN kort fråga med två eller tre alternativ innan du stagear, och spara svaret med gnubok_remember_fact. (4) Staga ett förslag per post med rätt id (transaction_id, document_id, invoice_id), aldrig gissade id:n. (5) Berätta INTE att du "stagear nu" eller att användaren ska "godkänna i appen", och upprepa inte siffror som kortet redan visar: avsluta med en eller två meningar om VARFÖR du valde som du valde. Saknas underlag helt: staga ändå om bokföringen är entydig och säg att kvittot ska bifogas till verifikationen (öppna den i Bokföring), annars be om underlaget till Dokumentinkorgen först.')
     lines.push('')
-    lines.push('Övriga skrivåtgärder hänvisas på samma sätt: fakturering → /invoices/new, leverantörsfaktura → /supplier-invoices/[id], moms → momsrapporten, bokslut → /bookkeeping/year-end. Där finns "Fråga …"-knappen med rätt skrivverktyg OCH rätt underlag inkopplat. Försök ALDRIG fabricera/föreslå att du stagear något härifrån.')
+    lines.push('Det som INTE görs härifrån: bokslut, periodlåsning och inställningar. Hänvisa dit med länk: bokslut → /bookkeeping/year-end, moms → /reports/vat-declaration, inställningar → /settings. Där finns "Fråga …"-knappen med rätt verktyg inkopplat. Påstå ALDRIG att du stagat något som du inte faktiskt anropat ett verktyg för.')
+    lines.push('')
+    lines.push('När användaren frågar VAR något finns i programmet eller HUR man gör något: svara med sidans namn och länk (appkartan ligger i dina minnen). Säg aldrig att du saknar tillgång till menystrukturen.')
     lines.push('')
     lines.push('Bra rytm för analytiska frågor: (1) anropa rätt läsverktyg, (2) svara med konkreta siffror från resultatet, (3) lägg till en kort förklaring eller nästa-steg-rekommendation om det är meningsfullt. Hellre verkligt svar än "gå till Rapporter och titta själv".')
     lines.push('')
