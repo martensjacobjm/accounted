@@ -1,0 +1,58 @@
+# Fork-bygge för bok.dalavs.se (martensjacobjm/accounted, beslut B-S21 2026-09-16).
+# Bygger self-hosted-imagen ur en jacob/*-gren på GitHubs runner (16 GB RAM) och
+# publicerar den under ghcr.io/martensjacobjm/gnubok, eftersom VANILJOK (WSL 8 GB)
+# inte klarar `next build` utan att frysa. Upstreams Dockerfile rörs inte: heap-flaggan
+# för typkontrollen (upstreams CI kör 8192, core-build.yml) läggs på en tillfällig kopia.
+name: fork-image
+
+on:
+  push:
+    branches: ['jacob/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dockerfile-variant med Node-heap för typkontrollen
+        run: |
+          sed 's|^RUN npm run build$|ENV NODE_OPTIONS=--max-old-space-size=6144\nRUN npm run build|' Dockerfile > Dockerfile.fork
+          grep -n -B1 'RUN npm run build' Dockerfile.fork
+
+      - name: Taggar
+        id: meta
+        run: |
+          SHORT=$(git rev-parse --short=7 HEAD)
+          BRANCH="${GITHUB_REF_NAME##*/}"
+          echo "tag=${BRANCH}-${SHORT}" >> "$GITHUB_OUTPUT"
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.fork
+          platforms: linux/amd64
+          push: true
+          build-args: EXTENSIONS_PRESET=self-hosted
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/gnubok:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/gnubok:${{ steps.meta.outputs.branch }}-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Resultat
+        run: echo "ghcr.io/${{ github.repository_owner }}/gnubok:${{ steps.meta.outputs.tag }}"
