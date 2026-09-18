@@ -5,9 +5,13 @@ import { generalHelp } from '../general-help'
 // longer read-only. These guards lock in:
 //   1. the everyday write tools ARE whitelisted (so /chat can stage a booking),
 //   2. the commit tool is NOT (nothing commits from chat without a click),
-//   3. year-end / period locks / settings stay off this intent, and
+//   3. tools that write WITHOUT staging stay off this intent, and
 //   4. the prompt describes the staged-approval workflow and forbids
 //      claiming a staging that never happened.
+// 2026-09-18 (Jacob: full access in the chat): bokslut, periodlås,
+// avstämning, lön and settings are whitelisted too, since every one of them
+// stages a pending_operation. Only the commit tool and the non-staging
+// writers stay out.
 
 const WRITE_TOOLS_EXPECTED = [
   'gnubok_categorize_transaction',
@@ -22,16 +26,28 @@ const WRITE_TOOLS_EXPECTED = [
   'gnubok_mark_invoice_as_paid',
   'gnubok_create_customer',
   'gnubok_create_supplier',
+  // full access 2026-09-18
+  'gnubok_link_transaction_to_journal_entry',
+  'gnubok_uncategorize_transaction',
+  'gnubok_reconcile_match',
+  'gnubok_link_invoice_to_voucher',
+  'gnubok_lock_period',
+  'gnubok_run_year_end',
+  'gnubok_update_company_settings',
 ]
 
 const NEVER_FROM_CHAT = [
+  // the click stays human
   'gnubok_approve_pending_operation',
-  'gnubok_run_year_end',
-  'gnubok_close_period',
-  'gnubok_lock_period',
-  'gnubok_unlock_period',
-  'gnubok_update_company_settings',
+  // bridge / goes to the upstream product team
+  'gnubok_call_tool',
+  'gnubok_feedback',
+  // write without staging a pending_operation
   'gnubok_create_company',
+  'gnubok_reject_pending_operation',
+  'gnubok_set_quote_status',
+  'gnubok_set_inbox_extracted_data',
+  'gnubok_upload_document',
 ]
 
 function renderPrompt() {
@@ -49,7 +65,7 @@ describe('general.help: the /chat assistant with staged write tools', () => {
     }
   })
 
-  it('never exposes the commit tool, year-end, period locks or settings', () => {
+  it('never exposes the commit tool or tools that write without staging', () => {
     for (const t of NEVER_FROM_CHAT) {
       expect(generalHelp.tools).not.toContain(t)
     }
@@ -70,11 +86,16 @@ describe('general.help: the /chat assistant with staged write tools', () => {
     expect(out).not.toContain('kan inte stagea')
   })
 
-  it('still points year-end and settings to their pages and forbids fake staging', () => {
+  it('claims full access, forbids read-only disclaimers and fake staging', () => {
     const out = renderPrompt()
-    expect(out).toContain('/bookkeeping/year-end')
-    expect(out).toContain('/settings')
+    expect(out).toContain('FULL ÅTKOMST')
+    expect(out).toContain('gnubok_link_transaction_to_journal_entry')
+    expect(out).not.toContain('Det som INTE görs härifrån')
     expect(out).toMatch(/Påstå ALDRIG att du stagat/i)
+  })
+
+  it('lists every tool once', () => {
+    expect(new Set(generalHelp.tools).size).toBe(generalHelp.tools.length)
   })
 
   it('tells the agent to answer navigation questions from the app map', () => {
