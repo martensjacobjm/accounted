@@ -3593,6 +3593,7 @@
     "expense_amount": "Amount ({currency})",
     "expense_vat": "VAT",
     "expense_account": "Expense account",
+    "talk_about_item": "Talk to the assistant about this document",
     "expense_account_from_note": "Suggested from your upload comment. Change it if wrong.",
     "expense_account_from_ai": "Suggested by the extraction. Change it if wrong.",
     "expense_liability_label": "Counter account (whom the company owes)",

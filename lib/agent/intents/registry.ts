@@ -2,6 +2,7 @@ import type { AgentIntent } from './types'
 import { generalHelp } from './general-help'
 import { transactionCategorization } from './transaction-categorization'
 import { inboxBulkBook } from './inbox-bulk-book'
+import { inboxItemDialog } from './inbox-item-dialog'
 import { invoiceDraft } from './invoice-draft'
 import { supplierInvoiceReview } from './supplier-invoice-review'
 import { vatReview } from './vat-review'
@@ -25,6 +26,7 @@ const INTENTS: AgentIntent<any, any>[] = [
   generalHelp,
   transactionCategorization,
   inboxBulkBook,
+  inboxItemDialog,
   invoiceDraft,
   supplierInvoiceReview,
   vatReview,
