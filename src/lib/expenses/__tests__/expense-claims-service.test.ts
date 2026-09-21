@@ -98,6 +98,55 @@ describe('registerExpenseClaim', () => {
     ])
   })
 
+  it('fork: books the owner on 2018 when the caller overrides the AB default', async () => {
+    enqueue({ data: { entity_type: 'aktiebolag' } }) // companies entity_type
+    enqueue({ data: { id: 'claim-1', amount_sek: 228.25, vat_sek: 45.65 } }) // insert
+    enqueue({ data: null }) // journal_entry_id update
+
+    const result = await registerExpenseClaim(sb, COMPANY, USER, {
+      description: 'Cubus AB',
+      expense_date: '2026-03-11',
+      amount: 228.25,
+      vat_amount: 45.65,
+      currency: 'SEK',
+      expense_account: '5480',
+      claimant_name: 'Wilma Eldh',
+      liability_account: '2018',
+    })
+
+    expect(result.ok).toBe(true)
+    const input = createJournalEntryMock.mock.calls[0][3]
+    expect(input.lines).toEqual([
+      expect.objectContaining({ account_number: '5480', debit_amount: 182.6 }),
+      expect.objectContaining({ account_number: '2641', debit_amount: 45.65 }),
+      expect.objectContaining({ account_number: '2018', credit_amount: 228.25 }),
+    ])
+    const insert = findCall('expense_claims', 'insert')
+    expect(insert?.[0]).toMatchObject({ liability_account: '2018' })
+  })
+
+  it('fork: an employee claim ignores a liability override and stays on 2820', async () => {
+    enqueue({ data: { entity_type: 'aktiebolag' } }) // companies entity_type
+    enqueue({ data: { id: 'emp-1', first_name: 'Sofie', last_name: 'Persson' } }) // employees
+    enqueue({ data: { id: 'claim-1', amount_sek: 500, vat_sek: 100 } }) // insert
+    enqueue({ data: null }) // journal_entry_id update
+
+    const result = await registerExpenseClaim(sb, COMPANY, USER, {
+      description: 'Tåg',
+      expense_date: '2026-09-01',
+      amount: 500,
+      vat_amount: 100,
+      currency: 'SEK',
+      expense_account: '5800',
+      employee_id: 'emp-1',
+      liability_account: '2018',
+    })
+
+    expect(result.ok).toBe(true)
+    const input = createJournalEntryMock.mock.calls[0][3]
+    expect(input.lines[2]).toMatchObject({ account_number: '2820', credit_amount: 500 })
+  })
+
   it('defaults an employee claim to liability 2820', async () => {
     enqueue({ data: { entity_type: 'aktiebolag' } }) // companies entity_type
     enqueue({ data: { id: 'emp-1', first_name: 'Sofie', last_name: 'Persson' } }) // employee lookup

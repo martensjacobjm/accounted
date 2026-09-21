@@ -14,6 +14,7 @@
 
 import { createHash } from 'node:crypto'
 import { buildHintInstruction, type ExtractionHints } from './extraction-hints'
+import { accountFromNote } from '@/lib/expenses/suggest-expense-account'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { InvoiceExtractionResult } from '@/types'
@@ -107,6 +108,16 @@ export const ExtractionSchema = z.object({
   // route UI emphasis and clarifying questions only; they never book anything.
   documentKind: DocumentKind.optional(),
   merchantCategory: MerchantCategory.optional(),
+  // Fork (bok.dalavs.se, Jacob 2026-09-22): the model proposes the BAS cost
+  // account for the whole document so the utlägg dialog opens pre-filled.
+  // Document-level and advisory only; the per-line accountSuggestion below
+  // stays null as upstream decided.
+  suggestedAccount: z
+    .string()
+    .regex(/^[4-7]\d{3}$/)
+    .nullable()
+    .catch(null)
+    .optional(),
   legibility: Legibility.optional(),
   purchaseTime: z
     .string()
@@ -357,6 +368,7 @@ Return ONLY a single JSON object that matches this schema exactly. No prose, no 
 {
   "documentKind": "receipt" | "supplier_invoice" | "government_letter" | "other" | null,
   "merchantCategory": "restaurant" | "cafe" | "taxi" | "parking" | "fuel" | "grocery" | "hotel" | "other" | null,
+  "suggestedAccount": string | null,   // 4-digit Swedish BAS cost account (class 4-7) for this purchase, receipts and supplier invoices only
   "legibility": "good" | "partial" | "unreadable",
   "purchaseTime": string | null,   // "HH:MM" 24h, receipts only
   "payment": { "method": "card" | "swish" | "cash" | "invoice" | "other" | null, "cardLast4": string | null } | null,
@@ -409,6 +421,7 @@ Rules:
 - Output JSON only. The first character must be '{' and the last must be '}'.
 - documentKind: "receipt" = point-of-sale proof of a COMPLETED payment (kassakvitto, kortkvitto, taxi/parking slip, webshop order confirmation marked paid). "supplier_invoice" = a request for payment (has due date, OCR/payment reference, bankgiro, "Att betala senast"). "government_letter" = correspondence from a myndighet (Skatteverket, Bolagsverket, Försäkringskassan...). "other" = contracts, statements, reports. null only when truly indeterminate.
 - supplier: ALWAYS the party that ISSUED the document and charges or receives the money (the seller, the bank, the myndighet). NEVER the customer or recipient: blocks labeled "Kund", "Kunduppgifter", "Fakturamottagare", "Mottagare", "Kundens ex", "Er referens" or a delivery/billing address describe the RECEIVING company, and none of their fields (name, org number, address) may be used for supplier. On bank documents (avtal, bankintyg, kontoutdrag) the bank is the supplier even when the customer's company details are printed more prominently than the bank's. If only the customer's identity is readable, leave every supplier field null.
+- suggestedAccount: the Swedish BAS 2026 cost account (4 digits, class 4-7) that best fits what was bought, judged from merchant, line items and any uploader comment or company rule given below. Typical: 5460 förbrukningsmaterial (städmaterial, småverktyg), 5480 arbetskläder och skyddsmaterial, 5410 förbrukningsinventarier, 5611 drivmedel personbil, 5800 resekostnader (taxi, parkering, tåg), 5831 kost och logi i Sverige, 6071 representation, 6110 kontorsmaterial, 6212 mobiltelefon, 6540 IT-tjänster och programvara, 6570 bankkostnader, 4010 inköp av varor för återförsäljning. If the uploader's comment names a 4-digit account, use exactly that. null for government letters and other non-purchase documents.
 - merchantCategory: judge from the merchant name and line items (a receipt from "Prinsen" listing food and wine is "restaurant" even without the word). Use "other" when unsure. null for non-receipts.
 - legibility: "good" = all key amounts and the merchant are readable. "partial" = some key fields are cut off, blurry, or unreadable. "unreadable" = the document is mostly illegible (too blurry/dark/small). Judge the IMAGE quality, not whether fields exist on the document.
 - payment: only for documents that show how payment was made. "card" for kort/VISA/Mastercard; cardLast4 only when a masked card number like ****1234 is printed. "invoice" means the document says it will be billed separately.
@@ -432,6 +445,7 @@ export function emptyResult(): InvoiceExtractionResult {
   return {
     documentKind: null,
     merchantCategory: null,
+    suggestedAccount: null,
     legibility: null,
     purchaseTime: null,
     payment: null,
@@ -594,6 +608,7 @@ const EXTRACTION_JSON_SCHEMA: Record<string, unknown> = {
   properties: {
     documentKind: nullable('string'),
     merchantCategory: nullable('string'),
+    suggestedAccount: nullable('string'),
     legibility: nullable('string'),
     purchaseTime: nullable('string'),
     payment: {
@@ -686,6 +701,7 @@ const EXTRACTION_JSON_SCHEMA: Record<string, unknown> = {
   required: [
     'documentKind',
     'merchantCategory',
+    'suggestedAccount',
     'legibility',
     'purchaseTime',
     'payment',
@@ -800,6 +816,9 @@ export async function extractInvoiceFields(
     // The uploader's declared kind is authoritative (fork): kind_hint already
     // wins in the UI resolver, this keeps extracted_data itself consistent.
     if (input.hints?.kindHint) validated.documentKind = input.hints.kindHint
+    // An account named in the uploader's comment beats the model's guess.
+    const notedAccount = accountFromNote(input.hints?.note)
+    if (notedAccount) validated.suggestedAccount = notedAccount
 
     return {
       // accountSuggestion is null at this point, enforced by the schema's

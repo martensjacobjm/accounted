@@ -133,7 +133,7 @@ export function buildHintInstruction(base: string, hints?: ExtractionHints | nul
   }
   if (hints.note) {
     parts.push(
-      `- The uploader's comment about this document (Swedish, trusted context for supplier, purpose and merchantCategory; never copy it into amounts): "${hints.note.replace(/"/g, "'")}"`,
+      `- The uploader's comment about this document (Swedish, trusted context for supplier, purpose, merchantCategory and suggestedAccount; a 4-digit account named here is the account to use; never copy it into amounts): "${hints.note.replace(/"/g, "'")}"`,
     )
   }
   if (hints.companyRules && hints.companyRules.length > 0) {

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslations } from 'next-intl'
 import {
   Dialog,
@@ -24,12 +24,24 @@ import { roundOre } from '@/lib/money'
 import { ACCOUNT_NUMBER_RE, ISO_DATE_RE } from '@/lib/invariants'
 import { ownerFallbackName, resolveExpenseLiabilityAccount, type ExpensePayer } from '@/lib/expenses/payer'
 import { isEntityType, usesPersonnummerAsOrgNumber } from '@/lib/company/entity-type'
+import {
+  OWNER_LIABILITY_CHOICES,
+  liabilityFromNote,
+  suggestExpenseAccount,
+  type ExpenseAccountSource,
+} from '@/lib/expenses/suggest-expense-account'
 import type { InvoiceExtractionResult } from '@/types'
 
 // Who paid for the underlag out of their own pocket. The account rule (2893
 // AB owner / 2018 EF owner / 2820 employee) lives in lib/expenses/payer.ts,
 // shared with the supplier-invoice form.
 export type { ExpensePayer }
+
+const LIABILITY_LABEL_KEYS = {
+  '2893': 'expense_liability_2893',
+  '2018': 'expense_liability_2018',
+  '2890': 'expense_liability_2890',
+} as const
 
 interface InboxItemLike {
   id: string
@@ -42,6 +54,9 @@ interface Props {
   onOpenChange: (open: boolean) => void
   item: InboxItemLike
   payer: ExpensePayer
+  /** Fork: the comment typed at upload (channel_context.user_note). Drives the
+   *  cost account and, for the owner, the counter account ("5480 mot 2018"). */
+  uploaderNote?: string | null
   /** Re-read the item after the claim posted its verifikat. */
   onSuccess: () => void | Promise<void>
 }
@@ -68,12 +83,12 @@ function parseAmount(raw: string): number {
  * POST /api/expense-claims, which books cost + moms against the person's
  * liability account and stamps the inbox item as booked.
  */
-export default function RegisterExpenseDialog({ open, onOpenChange, item, payer, onSuccess }: Props) {
+export default function RegisterExpenseDialog({ open, onOpenChange, item, payer, uploaderNote, onSuccess }: Props) {
   const t = useTranslations('inbox_workspace')
   const { toast } = useToast()
   const { accounts } = useAccounts()
   const entityType = useCompanyOptional()?.company?.entity_type ?? null
-  const liabilityAccount = resolveExpenseLiabilityAccount(entityType, payer)
+  const defaultLiabilityAccount = resolveExpenseLiabilityAccount(entityType, payer)
 
   const data = item.extracted_data
   const [description, setDescription] = useState('')
@@ -81,6 +96,13 @@ export default function RegisterExpenseDialog({ open, onOpenChange, item, payer,
   const [amountInput, setAmountInput] = useState('')
   const [vatInput, setVatInput] = useState('')
   const [expenseAccount, setExpenseAccount] = useState('')
+  const [accountSource, setAccountSource] = useState<ExpenseAccountSource | null>(null)
+  // Fork: the owner's counter account. '' = the entity default (2893 AB, 2018 EF).
+  const [liabilityChoice, setLiabilityChoice] = useState<string>('')
+  // The chart is only consulted when the dialog opens; keeping it out of the
+  // reset effect's deps means a refetched account list never wipes typed input.
+  const accountsRef = useRef(accounts)
+  accountsRef.current = accounts
   const [ownerName, setOwnerName] = useState('')
   const [employeeId, setEmployeeId] = useState('')
   const [employeeName, setEmployeeName] = useState('')
@@ -95,6 +117,10 @@ export default function RegisterExpenseDialog({ open, onOpenChange, item, payer,
   // debt, so the help and the outcome line say so instead of naming a
   // liability.
   const ownerIsTheCompany = isEntityType(entityType) && usesPersonnummerAsOrgNumber(entityType)
+  // Fork: the owner may override the entity default; when the owner is the
+  // company (EF) it is always 2018, and employees always 2820.
+  const canChooseLiability = payer === 'owner' && !ownerIsTheCompany
+  const liabilityAccount = canChooseLiability && liabilityChoice ? liabilityChoice : defaultLiabilityAccount
 
   // Reset per open so a previous underlag's numbers never carry over.
   useEffect(() => {
@@ -105,10 +131,18 @@ export default function RegisterExpenseDialog({ open, onOpenChange, item, payer,
     const vat = data?.totals?.vatAmount
     setAmountInput(total != null && total > 0 ? String(roundOre(total)).replace('.', ',') : '')
     setVatInput(!isForeign && vat != null && vat > 0 ? String(roundOre(vat)).replace('.', ',') : '0')
-    setExpenseAccount('')
+    // Fork: pre-fill the cost account from the comment, else the extraction.
+    const chart = accountsRef.current.length > 0 ? new Set(accountsRef.current.map((a) => a.account_number)) : null
+    const suggestion = suggestExpenseAccount(
+      { note: uploaderNote, extractedAccount: data?.suggestedAccount ?? null },
+      chart,
+    )
+    setExpenseAccount(suggestion.account ?? '')
+    setAccountSource(suggestion.source)
+    setLiabilityChoice(liabilityFromNote(uploaderNote) ?? '')
     setEmployeeId('')
     setEmployeeName('')
-  }, [open, item.id, data, isForeign])
+  }, [open, item.id, data, isForeign, uploaderNote])
 
   const amount = parseAmount(amountInput)
   // Foreign VAT is never deductible here: the field is locked and 0 is what
@@ -149,6 +183,9 @@ export default function RegisterExpenseDialog({ open, onOpenChange, item, payer,
       }
       if (payer === 'owner') body.claimant_name = claimantName
       else body.employee_id = employeeId
+      if (canChooseLiability && liabilityChoice && liabilityChoice !== defaultLiabilityAccount) {
+        body.liability_account = liabilityChoice
+      }
       const res = await fetch('/api/expense-claims', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -188,6 +225,9 @@ export default function RegisterExpenseDialog({ open, onOpenChange, item, payer,
     payer,
     claimantName,
     employeeId,
+    canChooseLiability,
+    liabilityChoice,
+    defaultLiabilityAccount,
     toast,
     t,
     onSuccess,
@@ -276,7 +316,32 @@ export default function RegisterExpenseDialog({ open, onOpenChange, item, payer,
               disabled={isSubmitting}
               selectedName={accountName}
             />
+            {accountSource && expenseAccount && (
+              <p className="text-xs text-muted-foreground">
+                {accountSource === 'note' ? t('expense_account_from_note') : t('expense_account_from_ai')}
+              </p>
+            )}
           </div>
+
+          {canChooseLiability && (
+            <div className="space-y-1.5">
+              <Label htmlFor="re-liability">{t('expense_liability_label')}</Label>
+              <select
+                id="re-liability"
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+                value={liabilityChoice || defaultLiabilityAccount}
+                onChange={(e) => setLiabilityChoice(e.target.value)}
+                disabled={isSubmitting}
+              >
+                {OWNER_LIABILITY_CHOICES.map((acc) => (
+                  <option key={acc} value={acc}>
+                    {acc} {t(LIABILITY_LABEL_KEYS[acc])}
+                  </option>
+                ))}
+              </select>
+              {liabilityAccount === '2018' && <p className="text-xs text-muted-foreground">{t('expense_outcome_ef')}</p>}
+            </div>
+          )}
 
           {amount > 0 && vatAmount < amount && (
             <div className="rounded-lg border border-border px-4 py-3 text-xs text-muted-foreground space-y-1">
@@ -285,7 +350,7 @@ export default function RegisterExpenseDialog({ open, onOpenChange, item, payer,
                 {vatAmount > 0 ? ` · 2641 D ${formatCurrency(vatAmount, currency)}` : ''}
                 {` · ${liabilityAccount} K ${formatCurrency(amount, currency)}`}
               </p>
-              {payer === 'owner' && ownerIsTheCompany ? (
+              {payer === 'owner' && (ownerIsTheCompany || liabilityAccount === '2018') ? (
                 <p>{t('expense_outcome_ef')}</p>
               ) : (
                 claimantName && <p>{t('expense_outcome_att_gora', { name: claimantName })}</p>

@@ -4215,6 +4215,10 @@ export const CreateExpenseClaimSchema = z
     expense_account: accountNumberSchema.refine((a) => /^[4-8]/.test(a), {
       message: 'Kostnadskontot måste vara ett resultatkonto (klass 4-8)',
     }),
+    /** Fork: the owner's counter account when the entity default is wrong for
+     *  the person (a delägare in a KB run in AB mode books 2018, not 2893).
+     *  Ignored for employees (always 2820). */
+    liability_account: z.enum(['2893', '2018', '2890']).optional(),
     employee_id: uuid.optional().nullable(),
     claimant_name: z.string().trim().max(200).optional(),
     document_id: uuid.optional().nullable(),
