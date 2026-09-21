@@ -15,6 +15,8 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { InfoTooltip } from '@/components/ui/info-tooltip'
 import { useToast } from '@/components/ui/use-toast'
+import { Checkbox } from '@/components/ui/checkbox'
+import { resolveInboxKind } from '@/lib/documents/inbox-kind'
 import { formatCurrency } from '@/lib/utils'
 import type { InvoiceExtractionResult, VatTreatment } from '@/types'
 import { getErrorMessage as getUserErrorMessage } from '@/lib/errors/get-error-message'
@@ -30,6 +32,10 @@ interface BulkBookInboxItem {
   // transaction (see InvoiceInboxWorkspace's InboxItem).
   matched_transaction_journal_entry_id?: string | null
   extracted_data: InvoiceExtractionResult | null
+  // Fork: shown on the per-row confirmation so the person sees WHAT they
+  // confirm (kvitto/faktura, kommentaren de skrev vid uppladdningen).
+  kind_hint?: 'supplier_invoice' | 'receipt' | null
+  channel_context?: { user_note?: string | null } | null
 }
 
 interface Props {
@@ -103,8 +109,24 @@ export default function BulkBookInboxDialog({ open, onOpenChange, items, onSucce
   const [category, setCategory] = useState<string>('')
   const [vatTreatment, setVatTreatment] = useState<VatTreatment | 'auto'>('auto')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  // Fork (Jacob 2026-09-21): nothing is booked that the person has not
+  // confirmed row by row. Every row starts unticked; the button books only
+  // the ticked ones and says how many.
+  const [confirmedIds, setConfirmedIds] = useState<Set<string>>(new Set())
 
   const bookable = useMemo(() => items.filter(isBookable), [items])
+  const confirmed = useMemo(
+    () => bookable.filter((it) => confirmedIds.has(it.id)),
+    [bookable, confirmedIds],
+  )
+  const toggleConfirmed = (id: string, on: boolean) =>
+    setConfirmedIds((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  const categoryLabel = CATEGORY_OPTIONS.find((o) => o.value === category)?.label ?? null
   const notMatched = useMemo(
     () => items.filter((it) => !it.matched_transaction_id && !it.created_journal_entry_id && !it.created_supplier_invoice_id).length,
     [items],
@@ -129,7 +151,10 @@ export default function BulkBookInboxDialog({ open, onOpenChange, items, onSucce
   // explicit user choice. The advisory rendered under the Moms picker spells
   // this out to the user.
   useEffect(() => {
-    if (open) setVatTreatment('auto')
+    if (open) {
+      setVatTreatment('auto')
+      setConfirmedIds(new Set())
+    }
   }, [open])
 
   // Underlag subtotals, split per currency. This used to be a single scalar
@@ -151,14 +176,14 @@ export default function BulkBookInboxDialog({ open, onOpenChange, items, onSucce
   const isMixedCurrency = underlagTotals.length > 1
 
   const submit = async () => {
-    if (!category || bookable.length === 0) return
+    if (!category || confirmed.length === 0) return
     setIsSubmitting(true)
     try {
       const res = await fetch('/api/extensions/ext/invoice-inbox/items/bulk-book', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          item_ids: bookable.map((it) => it.id),
+          item_ids: confirmed.map((it) => it.id),
           category,
           ...(vatTreatment !== 'auto' ? { vat_treatment: vatTreatment } : {}),
         }),
@@ -201,13 +226,75 @@ export default function BulkBookInboxDialog({ open, onOpenChange, items, onSucce
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Bokför {bookable.length} underlag</DialogTitle>
+          <DialogTitle>Bokför underlag</DialogTitle>
           <DialogDescription>
-            Varje underlag bokförs mot sin matchade banktransaktion med samma kategori och momsbehandling.
+            Välj kategori och moms, kryssa sedan i varje underlag du bekräftar. Bara ikryssade bokförs, var
+            och en mot sin matchade banktransaktion.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
+          {bookable.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Bekräfta varje underlag</Label>
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                  onClick={() =>
+                    setConfirmedIds(
+                      confirmed.length === bookable.length
+                        ? new Set()
+                        : new Set(bookable.map((it) => it.id)),
+                    )
+                  }
+                >
+                  {confirmed.length === bookable.length ? 'Avmarkera alla' : 'Markera alla'}
+                </button>
+              </div>
+              <ul className="max-h-64 overflow-y-auto rounded-lg border divide-y">
+                {bookable.map((it) => {
+                  const d = it.extracted_data
+                  const kind = resolveInboxKind(it)
+                  const kindLabel =
+                    kind === 'receipt'
+                      ? 'Kvitto'
+                      : kind === 'supplier_invoice'
+                        ? 'Leverantörsfaktura'
+                        : kind === 'government_letter'
+                          ? 'Myndighetsbrev'
+                          : 'Okänd typ'
+                  const who = d?.supplier?.name?.trim() || 'Okänd motpart'
+                  const when = d?.invoice?.invoiceDate ?? null
+                  const total = d?.totals?.total ?? null
+                  const note = it.channel_context?.user_note?.trim() || null
+                  const on = confirmedIds.has(it.id)
+                  return (
+                    <li key={it.id} className="flex items-start gap-3 px-3 py-2 text-xs">
+                      <Checkbox
+                        id={`bulk-ok-${it.id}`}
+                        checked={on}
+                        onCheckedChange={(v) => toggleConfirmed(it.id, v === true)}
+                        className="mt-0.5"
+                      />
+                      <label htmlFor={`bulk-ok-${it.id}`} className="min-w-0 flex-1 cursor-pointer">
+                        <span className="block truncate font-medium text-foreground">
+                          {who}
+                          {when ? ` · ${when}` : ''}
+                          {total != null ? ` · ${formatCurrency(total, d?.invoice?.currency ?? 'SEK')}` : ''}
+                        </span>
+                        <span className="block text-muted-foreground">
+                          {kindLabel}
+                          {categoryLabel ? ` → bokförs som ${categoryLabel}` : ' → välj kategori ovan'}
+                          {note ? ` · Kommentar: ${note}` : ''}
+                        </span>
+                      </label>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="bulk-category">Kategori</Label>
             <Select value={category} onValueChange={setCategory}>
@@ -296,8 +383,8 @@ export default function BulkBookInboxDialog({ open, onOpenChange, items, onSucce
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isSubmitting}>
             Avbryt
           </Button>
-          <Button onClick={submit} disabled={!category || bookable.length === 0} loading={isSubmitting}>
-            Bokför {bookable.length} underlag
+          <Button onClick={submit} disabled={!category || confirmed.length === 0} loading={isSubmitting}>
+            Bokför {confirmed.length} bekräftade
           </Button>
         </DialogFooter>
       </DialogContent>

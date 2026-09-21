@@ -3011,7 +3011,7 @@ export interface InboxChannelContext {
    * everything else on this type belongs to the WhatsApp branch and is absent
    * on them.
    */
-  channel: 'whatsapp' | 'mail_hunt' | 'peppol'
+  channel: 'whatsapp' | 'mail_hunt' | 'peppol' | 'web'
   /** Set by lib/invoices/peppol-inbox-delivery.ts: provenance of a received e-invoice. */
   peppol_provider?: string | null
   /** The provider's id for the received document (Qvalia integrationId). */

@@ -4,6 +4,11 @@ import { routeClassifiedDocument } from './lib/route-from-arkiv'
 import { isArkivSectionEnabled } from '@/lib/arkiv/flag'
 import type { EventPayload } from '@/lib/events/types'
 import { createServiceClientNoCookies } from '@/lib/auth/api-keys'
+import {
+  loadCompanyRulesForExtraction,
+  parseKindHint,
+  sanitiseUserNote,
+} from './lib/extraction-hints'
 const extensionLog = createLogger('invoice-inbox')
 import { resolveCompanyEntityType } from '@/lib/company/entity-type'
 import { NextResponse } from 'next/server'
@@ -201,6 +206,9 @@ const CompleteSignedUploadSchema = z.object({
   mime_type: z.string().trim().min(1).max(120),
   matched_transaction_id: z.string().uuid().nullable().optional(),
   skip_extraction: z.boolean().optional(),
+  // Fork: uploader-declared kind and comment (see lib/extraction-hints.ts).
+  kind_hint: z.enum(['receipt', 'supplier_invoice']).nullable().optional(),
+  user_note: z.string().max(2000).nullable().optional(),
 })
 
 /**
@@ -382,6 +390,11 @@ export const invoiceInboxExtension: Extension = {
         const skipExtraction =
           formData.get('skip_extraction') === 'true' ||
           formData.get('skip_extraction') === '1'
+        // Fork: what the uploader declared. Optional on the wire (agents and
+        // older clients send nothing), required by the web UI before upload.
+        const kindHint = parseKindHint(formData.get('kind_hint'))
+        const userNote = sanitiseUserNote(formData.get('user_note'))
+        const userHints = kindHint || userNote ? { kindHint, note: userNote } : null
 
         if (!file) return errorResponseFromCode('INBOX_UPLOAD_NO_FILE', ctx.log)
         if (file.size > MAX_FILE_SIZE) {
@@ -433,7 +446,7 @@ export const invoiceInboxExtension: Extension = {
             'upload',
             undefined,
             matchedTransactionId,
-            { skipExtraction, deferExtraction: true },
+            { skipExtraction, deferExtraction: true, ...(userHints ? { userHints } : {}) },
           )
           return NextResponse.json({ data: result })
         } catch (error) {
@@ -551,6 +564,9 @@ export const invoiceInboxExtension: Extension = {
         const { upload_id: uploadId, file_name: fileName, mime_type: mimeType } = parsed.data
         const matchedTransactionId = parsed.data.matched_transaction_id ?? null
         const skipExtraction = parsed.data.skip_extraction === true
+        const kindHint = parseKindHint(parsed.data.kind_hint)
+        const userNote = sanitiseUserNote(parsed.data.user_note)
+        const userHints = kindHint || userNote ? { kindHint, note: userNote } : null
 
         // The declared type drives the magic-byte check on completion, so
         // it is gated exactly like the multipart route's file.type.
@@ -616,7 +632,7 @@ export const invoiceInboxExtension: Extension = {
             'upload',
             undefined,
             matchedTransactionId,
-            { skipExtraction, deferExtraction: true },
+            { skipExtraction, deferExtraction: true, ...(userHints ? { userHints } : {}) },
           )
           return NextResponse.json({ data: result })
         } catch (error) {
@@ -3491,10 +3507,18 @@ export const invoiceInboxExtension: Extension = {
                 date: (tx as Transaction).date,
               }
             : null
+        // Fork: the company's own rules (agent_memory, profile) travel with
+        // every proposal so the person confirming sees what the byrå decided
+        // (e.g. "alla utgifter som kan belasta firman bokförs i firman").
+        // Present only when there are any, so the response shape of a company
+        // without memories is unchanged.
+        let companyRules: string[] = []
+        const rulesExtra = () => (companyRules.length > 0 ? { company_rules: companyRules } : {})
         const emptyProposalExtras = (settlementAccount: string) => ({
           entry_date: (tx as Transaction).date,
           transaction: txSummary,
           fallback_lines: buildFallbackKonteringLines(tx as Transaction, settlementAccount),
+          ...rulesExtra(),
         })
 
         try {
@@ -3532,6 +3556,7 @@ export const invoiceInboxExtension: Extension = {
             settlementAccount,
             settings?.vat_registered ?? null,
           )
+          companyRules = await loadCompanyRulesForExtraction(ctx.supabase, ctx.companyId)
 
           // getDefaultResult is the engine's way of saying it has nothing: a
           // 6991 placeholder at confidence 0.1. Rendering that as a proposal
@@ -3609,6 +3634,7 @@ export const invoiceInboxExtension: Extension = {
               // The day the money moved, not the day printed on the document:
               // it is what decides the period the entry lands in.
               entry_date: (tx as Transaction).date,
+              ...rulesExtra(),
             },
           })
         } catch (err) {
