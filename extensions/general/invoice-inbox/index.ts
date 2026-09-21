@@ -203,6 +203,12 @@ const CompleteSignedUploadSchema = z.object({
   user_note: z.string().max(2000).nullable().optional(),
 })
 
+// Fork: the person can correct the AI's kvitto/faktura call after the fact.
+// null clears the override so extracted_data.documentKind shows again.
+const SetInboxKindSchema = z.object({
+  kind_hint: z.enum(['receipt', 'supplier_invoice']).nullable(),
+})
+
 /**
  * The inbox item already filed for an archived document, in the /upload
  * response shape. Lets /upload/complete be retried after a lost response:
@@ -809,6 +815,62 @@ export const invoiceInboxExtension: Extension = {
             underlag_status: underlagStatus,
           },
         })
+      },
+    },
+
+    // ── Override the document kind (fork) ──────────────────
+    //
+    // The AI decides receipt vs supplier_invoice on its own; when it is wrong
+    // the person picks the right one here. Stored in kind_hint, the same
+    // column the +lev / +ver mail tag writes, which the list badge, the type
+    // filter and the booking flow already prefer over the AI's guess. It
+    // survives a re-extraction on purpose.
+    {
+      method: 'PATCH',
+      path: '/items/:id/kind',
+      handler: async (request: Request, ctx?: ExtensionContext) => {
+        if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+        const url = new URL(request.url)
+        const id = url.searchParams.get('_id')
+        if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
+
+        let body: z.infer<typeof SetInboxKindSchema>
+        try {
+          body = SetInboxKindSchema.parse(await request.json())
+        } catch (err) {
+          return NextResponse.json(
+            { error: err instanceof Error ? err.message : 'Invalid request body' },
+            { status: 400 },
+          )
+        }
+
+        const { data: item, error: itemError } = await ctx.supabase
+          .from('invoice_inbox_items')
+          .select('id, created_supplier_invoice_id, created_journal_entry_id')
+          .eq('id', id)
+          .eq('company_id', ctx.companyId)
+          .maybeSingle()
+        if (itemError) return NextResponse.json({ error: itemError.message }, { status: 500 })
+        if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+        if (item.created_supplier_invoice_id || item.created_journal_entry_id) {
+          return NextResponse.json(
+            { error: 'Posten är redan bokförd och typen kan inte ändras.' },
+            { status: 409 },
+          )
+        }
+
+        const { data: updated, error: updateError } = await ctx.supabase
+          .from('invoice_inbox_items')
+          .update({ kind_hint: body.kind_hint })
+          .eq('id', id)
+          .eq('company_id', ctx.companyId)
+          .select('id, kind_hint')
+          .maybeSingle()
+        if (updateError) return NextResponse.json({ error: updateError.message }, { status: 500 })
+        if (!updated) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+        return NextResponse.json({ data: updated })
       },
     },
 

@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AttnLine } from '@/components/ui/attn-line'
 import AiFilledIndicator from '@/components/ui/ai-filled-indicator'
@@ -433,10 +434,10 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
   const tStart = useTranslations('start_cards')
   const dismissKeyCompanyId = useCompanyOptional()?.company?.id ?? null
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  // Fork (Jacob 2026-09-21): the person uploading says what the document is
-  // and may comment on it BEFORE the AI reads it. Kind is required; the
-  // comment is optional and cleared after each batch.
-  const [uploadKind, setUploadKind] = useState<'receipt' | 'supplier_invoice' | ''>('')
+  // Fork (Jacob 2026-09-21): the AI decides kvitto/faktura by itself; the
+  // person uploading MAY pin the kind up front and MAY comment before the AI
+  // reads it. The comment is cleared after each batch, the kind is kept.
+  const [uploadKind, setUploadKind] = useState<'auto' | 'receipt' | 'supplier_invoice'>('auto')
   const [uploadNote, setUploadNote] = useState('')
   // Its own input: sharing the header's would upload without the purchase.
   const purchaseFileInputRef = useRef<HTMLInputElement | null>(null)
@@ -1076,14 +1077,6 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
     // scanned PDF) goes straight to Storage through a signed URL instead of a
     // multipart body. Only the inbox's own ceiling refuses anything now, here,
     // where we can name the size instead of letting the transfer fail.
-    if (!uploadKind) {
-      toast({
-        title: 'Välj Kvitto eller Faktura först',
-        description: 'Säg vad dokumentet är innan det laddas upp, så tolkas det rätt. Kommentaren är valfri.',
-        variant: 'destructive',
-      })
-      return undefined
-    }
     const file = exceedsHostedUploadLimit(original.size)
       ? await shrinkImageForUpload(original)
       : original
@@ -1135,12 +1128,13 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
     try {
       let res: Response
       const note = uploadNote.trim() || null
+      const kindHint = uploadKind === 'auto' ? null : uploadKind
       if (directToStorage) {
-        res = await uploadViaSignedUrl(file, { kindHint: uploadKind, userNote: note })
+        res = await uploadViaSignedUrl(file, { kindHint, userNote: note })
       } else {
         const fd = new FormData()
         fd.append('file', file)
-        fd.append('kind_hint', uploadKind)
+        if (kindHint) fd.append('kind_hint', kindHint)
         if (note) fd.append('user_note', note)
         res = await fetch('/api/extensions/ext/invoice-inbox/upload', {
           method: 'POST',
@@ -1537,30 +1531,22 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
               )}
             </Button>
           )}
-          {/* Fork: kind (required) + comment (optional) travel with the upload
-              and reach the AI extraction; see lib/extraction-hints.ts. */}
-          <div className="flex items-center gap-1" role="group" aria-label="Dokumenttyp">
-            <Button
-              type="button"
-              variant={uploadKind === 'receipt' ? 'default' : 'outline'}
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => setUploadKind('receipt')}
-              aria-pressed={uploadKind === 'receipt'}
-            >
-              Kvitto
-            </Button>
-            <Button
-              type="button"
-              variant={uploadKind === 'supplier_invoice' ? 'default' : 'outline'}
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => setUploadKind('supplier_invoice')}
-              aria-pressed={uploadKind === 'supplier_invoice'}
-            >
-              Faktura
-            </Button>
-          </div>
+          {/* Fork: optional kind + comment travel with the upload and reach the
+              AI extraction; see lib/extraction-hints.ts. The kind can be
+              changed afterwards in the detail pane. */}
+          <Select
+            value={uploadKind}
+            onValueChange={(v) => setUploadKind(v as 'auto' | 'receipt' | 'supplier_invoice')}
+          >
+            <SelectTrigger className="h-7 w-44 text-xs" aria-label="Dokumenttyp vid uppladdning">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Typ: tolkningen avgör</SelectItem>
+              <SelectItem value="receipt">Typ: kvitto</SelectItem>
+              <SelectItem value="supplier_invoice">Typ: faktura</SelectItem>
+            </SelectContent>
+          </Select>
           <Input
             value={uploadNote}
             onChange={(e) => setUploadNote(e.target.value)}
@@ -1574,7 +1560,6 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
             size="sm"
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
-            title={uploadKind ? undefined : 'Välj Kvitto eller Faktura först'}
           >
             {isUploading ? (
               <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
@@ -3333,6 +3318,30 @@ function FieldsRail({
     !item.matched_supplier_id &&
     !!extractedSupplierName
 
+  // Fork: change the document kind after the fact (kind_hint column).
+  const [isSavingKind, setIsSavingKind] = useState(false)
+  const handleKindChange = async (value: 'auto' | 'receipt' | 'supplier_invoice') => {
+    setIsSavingKind(true)
+    try {
+      const res = await fetch(`/api/extensions/ext/invoice-inbox/items/${item.id}/kind`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind_hint: value === 'auto' ? null : value }),
+      })
+      if (!res.ok) {
+        toast({
+          title: 'Kunde inte ändra typ',
+          description: (await resolveFailure(res)).message,
+          variant: 'destructive',
+        })
+        return
+      }
+      await onRetryRequested()
+    } finally {
+      setIsSavingKind(false)
+    }
+  }
+
   const handleRetry = async () => {
     // Retry overwrites extracted_data wholesale server-side, including any
     // manual field edits: make the user opt into that loss explicitly.
@@ -3433,12 +3442,31 @@ function FieldsRail({
           {/* Same resolution as the list row (sender's +lev / +ver hint first,
               then the AI), so the pane never contradicts the badge. */}
           {resolvedKind && (
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2">
               <span className="text-muted-foreground w-14 shrink-0">{t('doc_kind_label')}</span>
-              <span>
-                {t(`doc_kind_${resolvedKind}`)}
-                {item.kind_hint ? ' (angiven vid uppladdning)' : ''}
-              </span>
+              {/* Fork: the AI's guess can be overridden here; the choice is
+                  stored in kind_hint (wins over extracted_data.documentKind)
+                  and "Enligt tolkningen" clears it again. */}
+              {isResolved ? (
+                <span>{t(`doc_kind_${resolvedKind}`)}</span>
+              ) : (
+                <Select
+                  value={item.kind_hint ?? 'auto'}
+                  disabled={isSavingKind}
+                  onValueChange={(v) => void handleKindChange(v as 'auto' | 'receipt' | 'supplier_invoice')}
+                >
+                  <SelectTrigger className="h-7 w-52 text-xs" aria-label="Ändra dokumenttyp">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">
+                      {`Enligt tolkningen: ${t(`doc_kind_${data?.documentKind && ['receipt','supplier_invoice','government_letter','other'].includes(data.documentKind) ? data.documentKind : 'other'}`)}`}
+                    </SelectItem>
+                    <SelectItem value="receipt">{t('doc_kind_receipt')}</SelectItem>
+                    <SelectItem value="supplier_invoice">{t('doc_kind_supplier_invoice')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           )}
           {webNote && (
