@@ -433,6 +433,11 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
   const tStart = useTranslations('start_cards')
   const dismissKeyCompanyId = useCompanyOptional()?.company?.id ?? null
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  // Fork (Jacob 2026-09-21): the person uploading says what the document is
+  // and may comment on it BEFORE the AI reads it. Kind is required; the
+  // comment is optional and cleared after each batch.
+  const [uploadKind, setUploadKind] = useState<'receipt' | 'supplier_invoice' | ''>('')
+  const [uploadNote, setUploadNote] = useState('')
   // Its own input: sharing the header's would upload without the purchase.
   const purchaseFileInputRef = useRef<HTMLInputElement | null>(null)
   const { openAgentSheet, identity } = useAgentSheet()
@@ -1071,6 +1076,14 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
     // scanned PDF) goes straight to Storage through a signed URL instead of a
     // multipart body. Only the inbox's own ceiling refuses anything now, here,
     // where we can name the size instead of letting the transfer fail.
+    if (!uploadKind) {
+      toast({
+        title: 'Välj Kvitto eller Faktura först',
+        description: 'Säg vad dokumentet är innan det laddas upp, så tolkas det rätt. Kommentaren är valfri.',
+        variant: 'destructive',
+      })
+      return undefined
+    }
     const file = exceedsHostedUploadLimit(original.size)
       ? await shrinkImageForUpload(original)
       : original
@@ -1121,11 +1134,14 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
     setIsUploading(true)
     try {
       let res: Response
+      const note = uploadNote.trim() || null
       if (directToStorage) {
-        res = await uploadViaSignedUrl(file)
+        res = await uploadViaSignedUrl(file, { kindHint: uploadKind, userNote: note })
       } else {
         const fd = new FormData()
         fd.append('file', file)
+        fd.append('kind_hint', uploadKind)
+        if (note) fd.append('user_note', note)
         res = await fetch('/api/extensions/ext/invoice-inbox/upload', {
           method: 'POST',
           body: fd,
@@ -1171,7 +1187,7 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
     } finally {
       setIsUploading(false)
     }
-  }, [fetchItems, handleSelect, toast])
+  }, [fetchItems, handleSelect, toast, uploadKind, uploadNote])
 
   // Sequential queue: running multiple extractions concurrently would
   // hammer pdfjs on slow boxes. Per-file placeholder rows + the queue
@@ -1242,6 +1258,7 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
       }
     } finally {
       setUploadQueue(null)
+      setUploadNote('')
     }
   }, [uploadFile])
 
@@ -1520,11 +1537,44 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
               )}
             </Button>
           )}
+          {/* Fork: kind (required) + comment (optional) travel with the upload
+              and reach the AI extraction; see lib/extraction-hints.ts. */}
+          <div className="flex items-center gap-1" role="group" aria-label="Dokumenttyp">
+            <Button
+              type="button"
+              variant={uploadKind === 'receipt' ? 'default' : 'outline'}
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setUploadKind('receipt')}
+              aria-pressed={uploadKind === 'receipt'}
+            >
+              Kvitto
+            </Button>
+            <Button
+              type="button"
+              variant={uploadKind === 'supplier_invoice' ? 'default' : 'outline'}
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setUploadKind('supplier_invoice')}
+              aria-pressed={uploadKind === 'supplier_invoice'}
+            >
+              Faktura
+            </Button>
+          </div>
+          <Input
+            value={uploadNote}
+            onChange={(e) => setUploadNote(e.target.value)}
+            placeholder="Kommentar till tolkningen (valfritt)"
+            maxLength={500}
+            className="h-7 w-56 text-xs"
+            aria-label="Kommentar till tolkningen"
+          />
           <Button
             variant="outline"
             size="sm"
             onClick={() => fileInputRef.current?.click()}
             disabled={isUploading}
+            title={uploadKind ? undefined : 'Välj Kvitto eller Faktura först'}
           >
             {isUploading ? (
               <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
@@ -2986,6 +3036,23 @@ type SuggestedBooking = {
   /** The matched bank row's SEK amount and date, present on empty proposals
       so the dialog can still show the kronor figure. */
   transaction?: { amount_sek: number; date: string } | null
+  /** Fork: the company's own rules (agent_memory, profile) as short Swedish lines. */
+  company_rules?: string[]
+}
+
+/** Fork: what the byrå decided, shown next to every proposal so the person confirming sees it. */
+function CompanyRulesList({ rules }: { rules?: string[] }) {
+  if (!rules || rules.length === 0) return null
+  return (
+    <details className="text-[11px] text-muted-foreground">
+      <summary className="cursor-pointer hover:text-foreground">Företagets regler ({rules.length})</summary>
+      <ul className="pt-1.5 space-y-1 list-disc pl-4">
+        {rules.map((r, i) => (
+          <li key={i}>{r}</li>
+        ))}
+      </ul>
+    </details>
+  )
 }
 
 const SUGGESTION_SOURCE_LABEL: Record<string, string> = {
@@ -3058,7 +3125,12 @@ function ProposedBooking({
 
   if (data.lines.length === 0) {
     const reason = SUGGESTION_EMPTY_REASON[data.source]
-    return reason ? <p className="text-xs text-muted-foreground">{reason}</p> : null
+    return (
+      <div className="space-y-2">
+        {reason && <p className="text-xs text-muted-foreground">{reason}</p>}
+        <CompanyRulesList rules={data.company_rules} />
+      </div>
+    )
   }
 
   const debit = data.lines.reduce((t, l) => t + (l.debit_amount || 0), 0)
@@ -3112,6 +3184,8 @@ function ProposedBooking({
           Debet {formatCurrency(debit)} · Kredit {formatCurrency(credit)}
         </p>
       )}
+
+      <CompanyRulesList rules={data.company_rules} />
 
       {(SUGGESTION_SOURCE_LABEL[data.source] || data.requires_review || data.direction_mismatch) && (
         <details className="text-[11px] text-muted-foreground">
@@ -3242,6 +3316,9 @@ function FieldsRail({
   const waPurpose = waCtx?.representation?.purpose?.trim() || null
   const waCaption = waCtx?.caption?.trim() || null
   const waNote = waCtx?.user_note?.trim() || null
+  // Fork: the comment typed in the web upload (channel_context.channel === 'web').
+  const webNote =
+    item.channel_context?.channel === 'web' ? item.channel_context.user_note?.trim() || null : null
   const waUnanswered =
     !isResolved && waCtx?.pending_question?.status === 'moved_to_app'
   const showWaBlock =
@@ -3347,6 +3424,7 @@ function FieldsRail({
           paid. Read-only context above the editable fields; absent for
           extractions from before the fields existed. */}
       {(resolvedKind ||
+        webNote ||
         data?.payment?.method ||
         data?.pages ||
         (data?.totals?.total == null &&
@@ -3357,7 +3435,16 @@ function FieldsRail({
           {resolvedKind && (
             <div className="flex gap-2">
               <span className="text-muted-foreground w-14 shrink-0">{t('doc_kind_label')}</span>
-              <span>{t(`doc_kind_${resolvedKind}`)}</span>
+              <span>
+                {t(`doc_kind_${resolvedKind}`)}
+                {item.kind_hint ? ' (angiven vid uppladdning)' : ''}
+              </span>
+            </div>
+          )}
+          {webNote && (
+            <div className="flex gap-2">
+              <span className="text-muted-foreground w-14 shrink-0">Kommentar</span>
+              <span className="break-words min-w-0">{webNote}</span>
             </div>
           )}
           {data?.payment?.method && (

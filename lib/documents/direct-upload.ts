@@ -37,6 +37,9 @@ export interface DirectUploadOptions {
   skipExtraction?: boolean
   /** Injectable for tests; defaults to the global fetch. */
   fetchImpl?: typeof fetch
+  /** Fork: what the uploader declared (kvitto/faktura) and their comment; forwarded to /upload/complete. */
+  kindHint?: 'receipt' | 'supplier_invoice' | null
+  userNote?: string | null
 }
 
 interface SignedUploadReservation {
@@ -104,6 +107,8 @@ export async function uploadViaSignedUrl(
       mime_type: file.type,
       matched_transaction_id: options.matchedTransactionId ?? null,
       skip_extraction: options.skipExtraction === true,
+      ...(options.kindHint ? { kind_hint: options.kindHint } : {}),
+      ...(options.userNote ? { user_note: options.userNote } : {}),
     }),
   })
 }

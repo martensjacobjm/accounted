@@ -13,6 +13,7 @@
 // the user can fill the fields in manually.
 
 import { createHash } from 'node:crypto'
+import { buildHintInstruction, type ExtractionHints } from './extraction-hints'
 import { z } from 'zod'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { InvoiceExtractionResult } from '@/types'
@@ -57,6 +58,12 @@ export interface ExtractionInput {
    * creation. Optional: callers without company context lose only this guard.
    */
   ownCompany?: OwnCompanyIdentity
+  /**
+   * Fork bok.dalavs.se: what the uploader declared (kvitto/faktura, a comment)
+   * and the company's own rules (agent_memory, profile). Appended to the user
+   * instruction, never to the cached system prompt. See extraction-hints.ts.
+   */
+  hints?: ExtractionHints | null
 }
 
 export interface OwnCompanyIdentity {
@@ -717,7 +724,7 @@ export async function extractInvoiceFields(
     const request = {
       document: toDocumentInput(input),
       system: SYSTEM_PROMPT,
-      instruction: EXTRACTION_INSTRUCTION,
+      instruction: buildHintInstruction(EXTRACTION_INSTRUCTION, input.hints),
       jsonSchema: EXTRACTION_JSON_SCHEMA,
     }
     let result = await service.extractFromDocument({ ...request, maxTokens: baseMaxTokens })
@@ -787,6 +794,9 @@ export async function extractInvoiceFields(
 
     const parsed = JSON.parse(extractJsonObject(rawText))
     const validated = ExtractionSchema.parse(parsed)
+    // The uploader's declared kind is authoritative (fork): kind_hint already
+    // wins in the UI resolver, this keeps extracted_data itself consistent.
+    if (input.hints?.kindHint) validated.documentKind = input.hints.kindHint
 
     return {
       // accountSuggestion is null at this point, enforced by the schema's

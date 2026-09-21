@@ -3,6 +3,7 @@ import { uploadDocument } from '@/lib/core/documents/document-service'
 import { extractInvoiceFields, emptyResult, fetchOwnCompanyIdentity } from './extract-invoice-fields'
 import { mirrorExtractionToDocument } from './mirror-extraction'
 import type { InboxKindHint } from './resend-inbound'
+import { loadCompanyRulesForExtraction, type ExtractionHints, type UploadKindHint } from './extraction-hints'
 import { getAiStatus } from '@/lib/ai'
 import { hasCapability } from '@/lib/entitlements/has-capability'
 import { CAPABILITY } from '@/lib/entitlements/keys'
@@ -213,6 +214,14 @@ function sanitiseCaption(raw: string | null | undefined): string | null {
 export interface ArchivedDocumentProcessingOptions {
   skipExtraction?: boolean
   channelMeta?: ChannelMeta
+  /**
+   * Fork bok.dalavs.se: what the person uploading in the web UI declared.
+   * kindHint lands in invoice_inbox_items.kind_hint (same column the +lev /
+   * +ver mail tag uses), the note in channel_context.user_note (same field the
+   * WhatsApp intake uses, so it reaches the booking notes for free), and both
+   * are handed to the AI extraction together with the company's rules.
+   */
+  userHints?: { kindHint?: UploadKindHint | null; note?: string | null }
   /** Overrides the system actor id on the DocumentIngested history event.
    *  Omitted = today's behavior (resend-inbound for email, user otherwise). */
   actorId?: string
@@ -427,6 +436,16 @@ export async function processArchivedDocument(
             ? 'ai_unconfigured'
             : null
 
+  // Fork: uploader hints + company rules travel with both extraction paths.
+  const extractionHints =
+    syncSkipReason !== null
+      ? null
+      : {
+          kindHint: opts.userHints?.kindHint ?? emailMeta?.kindHint ?? null,
+          note: opts.userHints?.note ?? null,
+          companyRules: await loadCompanyRulesForExtraction(supabase, companyId),
+        }
+
   if (opts.deferExtraction && syncSkipReason === null) {
     // Staged path: extraction WILL call Bedrock, so create the row now and
     // let the response go. The deferred worker (or, after a crash, the sweep
@@ -451,7 +470,7 @@ export async function processArchivedDocument(
         email_body_text: emailMeta?.bodyText || null,
         resend_email_id: emailMeta?.resendEmailId || null,
         resend_attachment_id: emailMeta?.resendAttachmentId || null,
-        kind_hint: emailMeta?.kindHint ?? null,
+        kind_hint: emailMeta?.kindHint ?? opts.userHints?.kindHint ?? null,
         raw_email_payload: emailMeta?.messageId
           ? { messageId: emailMeta.messageId, filename: file.name }
           : null,
@@ -460,7 +479,9 @@ export async function processArchivedDocument(
         whatsapp_message_id: opts.channelMeta?.whatsappMessageId ?? null,
         channel_context: opts.channelMeta
           ? { channel: 'whatsapp', caption: sanitiseCaption(opts.channelMeta.caption) }
-          : null,
+          : opts.userHints?.note
+            ? { channel: 'web', user_note: opts.userHints.note }
+            : null,
       })
       .select('*')
       .single()
@@ -472,6 +493,7 @@ export async function processArchivedDocument(
       documentId: doc.id,
       companyId,
       correlationId,
+      hints: extractionHints,
       file,
       pageCount,
       gatedByPageCount,
@@ -519,6 +541,7 @@ export async function processArchivedDocument(
         mimeType: file.type,
         fileName: file.name,
         ownCompany: await fetchOwnCompanyIdentity(supabase, companyId),
+        hints: extractionHints,
       })
   const { data: extracted, rawText } = extraction
   if (!skipExtraction && slicedBuffer != null && pageCount != null) {
@@ -546,7 +569,7 @@ export async function processArchivedDocument(
       email_body_text: emailMeta?.bodyText || null,
       resend_email_id: emailMeta?.resendEmailId || null,
       resend_attachment_id: emailMeta?.resendAttachmentId || null,
-      kind_hint: emailMeta?.kindHint ?? null,
+      kind_hint: emailMeta?.kindHint ?? opts.userHints?.kindHint ?? null,
       raw_email_payload: emailMeta?.messageId
         ? { messageId: emailMeta.messageId, filename: file.name }
         : null,
@@ -558,7 +581,9 @@ export async function processArchivedDocument(
       whatsapp_message_id: opts.channelMeta?.whatsappMessageId ?? null,
       channel_context: opts.channelMeta
         ? { channel: 'whatsapp', caption: sanitiseCaption(opts.channelMeta.caption) }
-        : null,
+        : opts.userHints?.note
+          ? { channel: 'web', user_note: opts.userHints.note }
+          : null,
     })
     .select('*')
     .single()
@@ -619,6 +644,7 @@ interface DeferredExtractionJob {
   documentId: string
   companyId: string
   correlationId: string
+  hints: ExtractionHints | null
   file: { name: string; buffer: ArrayBuffer; type: string }
   pageCount: number | null
   gatedByPageCount: boolean
@@ -661,6 +687,7 @@ function scheduleDeferredExtraction(job: DeferredExtractionJob): void {
             mimeType: job.file.type,
             fileName: job.file.name,
             ownCompany: await fetchOwnCompanyIdentity(supabase, job.companyId),
+            hints: job.hints,
           })
           extracted = result.data
           rawText = result.rawText
