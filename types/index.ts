@@ -3986,6 +3986,8 @@ export interface InvoiceExtractionResult {
   // questions only: never bookings.
   documentKind?: ExtractedDocumentKind | null
   merchantCategory?: ExtractedMerchantCategory | null
+  /** Fork: document-level BAS cost account proposed by the extraction (class 4-7), advisory. */
+  suggestedAccount?: string | null
   legibility?: ExtractedLegibility | null
   purchaseTime?: string | null
   payment?: { method: ExtractedPaymentMethod | null; cardLast4: string | null } | null

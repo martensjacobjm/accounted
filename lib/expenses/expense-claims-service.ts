@@ -34,6 +34,8 @@ import { createLogger } from '@/lib/logger'
 const log = createLogger('expenses/claims')
 
 export const EXPENSE_LIABILITY_ACCOUNTS = ['2893', '2820', '2018', '2890'] as const
+/** Fork: owner counter accounts a caller may choose instead of the entity default. */
+const OWNER_LIABILITY_OVERRIDES: ReadonlySet<string> = new Set(['2893', '2018', '2890'])
 export type ExpenseLiabilityAccount = (typeof EXPENSE_LIABILITY_ACCOUNTS)[number]
 
 export interface ExpenseClaimRow {
@@ -68,6 +70,8 @@ export interface RegisterExpenseClaimInput {
   /** Optional explicit rate; omitted → Riksbanken (cached) for expense_date. */
   exchange_rate?: number
   expense_account: string
+  /** Fork: owner counter account override (2893 / 2018 / 2890); employees ignore it. */
+  liability_account?: string
   /** Defaults per claimant kind: employee → 2820, otherwise → 2893. */
   employee_id?: string
   /** Required when employee_id is absent (e.g. the owner's name). */
@@ -133,6 +137,9 @@ export async function registerExpenseClaim(
   let claimantName = input.claimant_name?.trim() ?? ''
   let employeeId: string | null = null
   let liability: string = ownerLiability
+  if (!input.employee_id && input.liability_account && OWNER_LIABILITY_OVERRIDES.has(input.liability_account)) {
+    liability = input.liability_account
+  }
   if (input.employee_id) {
     const { data: emp } = await supabase
       .from('employees')
