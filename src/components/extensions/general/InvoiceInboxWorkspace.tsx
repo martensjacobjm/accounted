@@ -1930,6 +1930,17 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
                 }
                 await Promise.all([fetchItems(), handleSelect(targetId)])
               }}
+              onTalkAboutItem={
+                identity.isVerified && assistantAvailable
+                  ? (itemId) => {
+                      openAgentSheet({
+                        intentId: 'inbox.item-dialog',
+                        intentArgs: { item_id: itemId },
+                        contextRef: `inbox_item:${itemId}`,
+                      })
+                    }
+                  : undefined
+              }
               onAskAssistant={
                 identity.isVerified && assistantAvailable
                   ? (transactionId) => {
@@ -2861,6 +2872,7 @@ function FieldsRail({
   onMatchTransaction,
   onUnmatchTransaction,
   onAskAssistant,
+  onTalkAboutItem,
   isDeleting,
   onFieldsUpdated,
   onRetryRequested,
@@ -2881,6 +2893,8 @@ function FieldsRail({
   onMatchTransaction: () => void
   onUnmatchTransaction: () => Promise<void>
   onAskAssistant?: (transactionId: string) => void
+  /** Fork: open the assistant on this one item, matched or not (inbox.item-dialog). */
+  onTalkAboutItem?: (itemId: string) => void
   isDeleting: boolean
   onFieldsUpdated: (data: InvoiceExtractionResult) => void
   /** Re-read the item after this rail posted a verifikat for it. */
@@ -3426,6 +3440,11 @@ function FieldsRail({
                 Fråga assistenten
               </Button>
             )}
+            {showBookingBridge && onTalkAboutItem && (
+              <Button variant="secondary" size="sm" className="w-full" onClick={() => onTalkAboutItem(item.id)}>
+                {t('talk_about_item')}
+              </Button>
+            )}
             {/* One control, and its scope is the whole verifikat. It opens
                 pre-filled with the proposal when there is one and empty when
                 there is not, so there is no separate "book manually" path to
@@ -3463,6 +3482,11 @@ function FieldsRail({
                 answer keeps BFL 5 kap 6-7 § intact (the underlag is booked
                 as a verifikat, never forced into a supplier invoice), and the
                 verifikat editor stays reachable below as the escape hatch. */}
+            {onTalkAboutItem && (
+              <Button variant="secondary" size="sm" className="w-full" onClick={() => onTalkAboutItem(item.id)}>
+                {t('talk_about_item')}
+              </Button>
+            )}
             <PayerChoiceSelect value={payer} onChange={setPayer} accountingMethod={accountingMethod} />
             {payer === 'company' ? (
               <Button variant="default" size="sm" className="w-full" onClick={onMatchTransaction}>

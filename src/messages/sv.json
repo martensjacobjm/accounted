@@ -3847,6 +3847,7 @@
     "expense_amount": "Belopp ({currency})",
     "expense_vat": "Moms",
     "expense_account": "Kostnadskonto",
+    "talk_about_item": "Prata med assistenten om underlaget",
     "expense_account_from_note": "Förslag från din kommentar vid uppladdningen. Ändra om det är fel.",
     "expense_account_from_ai": "Förslag från tolkningen. Ändra om det är fel.",
     "expense_liability_label": "Motkonto (vem bolaget är skyldigt)",
