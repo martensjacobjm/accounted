@@ -34,6 +34,13 @@ const Schema = z.object({
   underlag: z.string().max(24_000).optional(),
   /** Self-consistency samples (default 3). */
   samples: z.number().int().min(1).max(5).optional(),
+  /**
+   * Fork (bok.dalavs.se, 2026-09-22): what the user typed in the review dialog
+   * ("vad är det här?"). It forces a fresh read with the note weighed first, and
+   * is kept as the row's note (unbooked rows only) so the next read, the chat
+   * and the verifikat see it too.
+   */
+  user_note: z.string().trim().max(1000).optional(),
 })
 
 // withRouteContext enforces auth (MFA on hosted) and resolves the active
@@ -84,7 +91,7 @@ export const POST = withRouteContext(
 
     const { data: tx } = await supabase
       .from('transactions')
-      .select('id, merchant_name, description, original_description, amount, date, currency, category, is_business, document_id')
+      .select('id, merchant_name, description, original_description, notes, reference, counterparty_account, counterparty_iban, amount, date, currency, category, is_business, document_id, journal_entry_id')
       .eq('id', parsed.data.transaction_id)
       .eq('company_id', companyId)
       .maybeSingle()
@@ -96,14 +103,26 @@ export const POST = withRouteContext(
     ])
 
     try {
-      const transaction = tx as Transaction
+      let transaction = tx as Transaction
+      const userNote = parsed.data.user_note?.trim() || null
+      if (userNote && !transaction.journal_entry_id) {
+        // Keep it on the row: not räkenskapsinformation until booked (the
+        // booking copies it into the verifikat), and the read key includes it.
+        const { error: noteErr } = await supabase
+          .from('transactions')
+          .update({ notes: userNote })
+          .eq('id', transaction.id)
+          .eq('company_id', companyId)
+          .is('journal_entry_id', null)
+        if (!noteErr) transaction = { ...transaction, notes: userNote }
+      }
       const entityType = parseEntityType(company?.entity_type)
       const vatRegistered = settings?.vat_registered ?? false
 
       // The read made before anyone opened the row (the ten-minute cron, or
       // an earlier open) answers at once while it is fresh; a caller who
       // brings its own underlag or sample count wants a new one.
-      if (parsed.data.underlag == null && parsed.data.samples == null) {
+      if (parsed.data.underlag == null && parsed.data.samples == null && !userNote) {
         const stored = await loadReads(supabase, companyId, [transaction.id]).catch(() => new Map())
         const read = stored.get(transaction.id)
         if (read && readIsFresh(read, transaction)) return NextResponse.json({ data: read })
@@ -114,6 +133,7 @@ export const POST = withRouteContext(
         vatRegistered,
         underlag: parsed.data.underlag,
         samples: parsed.data.samples,
+        userNote,
       })
       // Keep it for the list and the next open. Best effort: a failed
       // store never costs the caller the answer.

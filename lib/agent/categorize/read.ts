@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { gatherCandidates } from './candidates'
 import { gatherUnderlag } from './underlag'
+import { loadCompanyRules } from '@/lib/agent/company-rules'
 import { selectAccount, type AccountCandidate, type AccountSelection } from './select-account'
 import { getAccountName } from '@/lib/bookkeeping/client-account-names'
 import { accountProposal, categoryForAccount, type BookingProposal } from '@/lib/bookkeeping/proposal'
@@ -33,6 +34,10 @@ export interface ReadOptions {
   /** Extracted receipt/invoice text when the caller already has it. */
   underlag?: string
   samples?: number
+  /** Fork: typed in the review dialog for this read; weighed above everything but the law. */
+  userNote?: string | null
+  /** Fork: the company's rules when the caller already loaded them (the cron, per company). */
+  companyRules?: string[]
 }
 
 export async function readTransaction(
@@ -41,8 +46,11 @@ export async function readTransaction(
   tx: Transaction,
   opts: ReadOptions,
 ): Promise<{ selection: AccountSelection; candidates: AccountCandidate[]; read: AssistantRead }> {
-  const underlag = opts.underlag ?? (await gatherUnderlag(supabase, companyId, tx.id, tx.document_id))
-  const candidates = await gatherCandidates(supabase, companyId, tx)
+  const [underlag, candidates, companyRules] = await Promise.all([
+    opts.underlag != null ? Promise.resolve(opts.underlag) : gatherUnderlag(supabase, companyId, tx.id, tx.document_id),
+    gatherCandidates(supabase, companyId, tx),
+    opts.companyRules ? Promise.resolve(opts.companyRules) : loadCompanyRules(supabase, companyId),
+  ])
   const selection = await selectAccount({
     transaction: {
       merchantName: tx.merchant_name,
@@ -50,7 +58,14 @@ export async function readTransaction(
       amount: tx.amount,
       date: tx.date,
       currency: tx.currency,
+      // Fork: what the user wrote and what the bank said about the row.
+      notes: tx.notes,
+      reference: tx.reference,
+      originalDescription: tx.original_description,
+      counterpartyAccount: tx.counterparty_account ?? (tx as { counterparty_iban?: string | null }).counterparty_iban ?? null,
+      userNote: opts.userNote ?? null,
     },
+    companyRules,
     underlag,
     candidates,
     entityType: opts.entityType,
@@ -180,7 +195,7 @@ export interface PlanOptions {
 }
 
 const TX_COLUMNS =
-  'id, company_id, document_id, merchant_name, description, original_description, amount, amount_sek, date, currency, category, is_business, is_ignored, mcc_code, cash_account_id, journal_entry_id'
+  'id, company_id, document_id, merchant_name, description, original_description, notes, reference, counterparty_account, counterparty_iban, amount, amount_sek, date, currency, category, is_business, is_ignored, mcc_code, cash_account_id, journal_entry_id'
 
 /**
  * The next unbooked transactions worth a read: newest first, without a
@@ -238,4 +253,19 @@ export async function planAssistantReads(supabase: SupabaseClient, opts: PlanOpt
     }
   }
   return planned
+}
+
+/**
+ * Fork (bok.dalavs.se, 2026-09-22): forget the company's stored reads so the
+ * next open (or the ten-minute cron) reads again. Called when what a read
+ * depends on changes outside the row itself: a rule the user taught, a
+ * counterparty template or mapping rule created by a booking. The table is a
+ * cache of proposals, never bookkeeping, so deleting is safe; best effort.
+ */
+export async function invalidateAssistantReads(supabase: SupabaseClient, companyId: string): Promise<void> {
+  try {
+    await supabase.from('transaction_assistant_reads').delete().eq('company_id', companyId)
+  } catch {
+    // A stale proposal is the worst case; never fail the caller over it.
+  }
 }

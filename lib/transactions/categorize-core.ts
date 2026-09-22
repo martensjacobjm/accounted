@@ -266,6 +266,11 @@ export async function categorizeMatchedTransaction(
     return { error: 'Transaction not found: it may have been deleted.', status: 404 }
   }
   const { transaction_voucher_links: junctionLinks, ...transaction } = transactionRow
+  // Fork (bok.dalavs.se, 2026-09-22): the user's own note on the row is the
+  // verifikat's "vad gäller det" when no caller passes notes (the review dialog
+  // and MCP never did), so what the user wrote survives the booking.
+  const rowNote = typeof (transaction as { notes?: unknown }).notes === 'string' ? ((transaction as { notes: string }).notes).trim() : ''
+  const effectiveNotes = notes?.trim() || rowNote || undefined
   if (hasBankLineJunctionRow(junctionLinks)) {
     return { error: 'Transaction already has a journal entry: it was categorized in the meantime.', status: 409 }
   }
@@ -473,7 +478,7 @@ export async function categorizeMatchedTransaction(
   let journalEntryId: string | null = null
   try {
     const journalEntry = await createTransactionJournalEntry(
-      supabase, companyId, userId, transaction as Transaction, mappingResult, notes,
+      supabase, companyId, userId, transaction as Transaction, mappingResult, effectiveNotes,
     )
     if (journalEntry) journalEntryId = journalEntry.id
   } catch (err) {

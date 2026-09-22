@@ -117,3 +117,37 @@ export function renderChannelContextNotes(
     return capFreeText(line)
   }
 }
+
+/**
+ * Fork (bok.dalavs.se, 2026-09-22): everything a person said about an inbox item,
+ * for a MODEL prompt (never for a posted verifikat). Unlike the booking-notes
+ * line above, the caption is included: the model only proposes, a human decides.
+ * One helper for every prompt that reads an item (bank categorization, the
+ * inbox intents, supplier invoice review), so no call site drops the comment.
+ */
+export function renderChannelContextForModel(ctx: InboxChannelContext | null | undefined): string[] {
+  if (!ctx) return []
+  const one = (v: string | null | undefined, max = 400): string | null => {
+    if (typeof v !== 'string') return null
+    const s = v.replace(/\s+/g, ' ').trim()
+    return s ? (s.length > max ? `${s.slice(0, max - 1)}…` : s) : null
+  }
+  const lines: string[] = []
+  const note = one(ctx.user_note)
+  if (note) lines.push(`Uppladdarens kommentar: ${note}`)
+  const answer = one(ctx.context_answer?.raw_answer)
+  if (answer && answer !== note) lines.push(`Svar till kvittoroboten: ${answer}`)
+  const rep = ctx.representation
+  if (rep && !rep.denied) {
+    const names = (rep.participants ?? []).map(renderChannelParticipant).filter(Boolean)
+    const parts = [names.length ? `deltagare ${names.join(', ')}` : '', rep.purpose ? `syfte ${one(rep.purpose, 200)}` : ''].filter(Boolean)
+    if (parts.length) lines.push(`Representation: ${parts.join('; ')}`)
+  } else if (rep?.denied) {
+    lines.push('Representation: nej enligt användaren')
+  }
+  const caption = one(ctx.caption, 300)
+  if (caption) lines.push(`Bildtext: ${caption}`)
+  const subject = one(ctx.mail_subject, 200)
+  if (subject) lines.push(`Mejlets ämne: ${subject}`)
+  return lines
+}

@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { roundOre } from '@/lib/money'
+import { renderChannelContextForModel } from '@/lib/documents/channel-context-notes'
+import type { InboxChannelContext } from '@/types'
 
 /**
  * Gather the underlag (receipt / invoice text) matched to a transaction and
@@ -50,7 +52,7 @@ export async function gatherUnderlag(
       .eq('matched_transaction_id', transactionId),
     supabase
       .from('invoice_inbox_items')
-      .select('extracted_data')
+      .select('extracted_data, channel_context')
       .eq('company_id', companyId)
       .eq('matched_transaction_id', transactionId),
     documentId
@@ -90,10 +92,12 @@ export async function gatherUnderlag(
   // Invoice inbox items (structured extraction of an invoice/receipt).
   for (const it of ((inboxRes as { data: unknown }).data ?? []) as {
     extracted_data: Record<string, unknown> | null
+    channel_context?: InboxChannelContext | null
   }[]) {
     const ex = it.extracted_data
-    if (!ex) continue
-    lines.push(renderExtraction(ex, 'Faktura/kvitto (inkorg)'))
+    if (ex) lines.push(renderExtraction(ex, 'Faktura/kvitto (inkorg)'))
+    // Fork: what the uploader said about it (comment, WhatsApp answers, caption).
+    lines.push(...renderChannelContextForModel(it.channel_context ?? null))
   }
 
   // The transaction's own attached document.
@@ -118,5 +122,12 @@ function renderExtraction(ex: Record<string, unknown>, label: string): string {
 
   const items = lineItemDescriptions(ex)
   const head = `${label}: ${parts.join(', ') || 'utläst underlag'}.`
-  return items.length ? `${head} Rader: ${items.map((d) => `"${d}"`).join('; ')}.` : head
+  const body = items.length ? `${head} Rader: ${items.map((d) => `"${d}"`).join('; ')}.` : head
+  // Fork: the reading's own verdict (document kind, category, account from the
+  // uploader's comment or the model), which upstream computed and never passed on.
+  const extra: string[] = []
+  if (typeof ex.documentKind === 'string' && ex.documentKind) extra.push(`Dokumenttyp: ${ex.documentKind}`)
+  if (typeof ex.merchantCategory === 'string' && ex.merchantCategory) extra.push(`Kategori enligt tolkningen: ${ex.merchantCategory}`)
+  if (typeof ex.suggestedAccount === 'string' && /^\d{4}$/.test(ex.suggestedAccount)) extra.push(`Tolkningens kontoförslag: ${ex.suggestedAccount}`)
+  return extra.length ? `${body}\n${extra.join('. ')}.` : body
 }

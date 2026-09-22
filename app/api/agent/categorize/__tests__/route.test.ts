@@ -138,3 +138,58 @@ describe('POST /api/agent/categorize', () => {
     )
   })
 })
+
+describe('POST /api/agent/categorize: the user can tell the assistant what the row is (fork)', () => {
+  function recordingSupabase(tx: Record<string, unknown>) {
+    const updates: { table: string; values: unknown; filters: unknown[][] }[] = []
+    return {
+      updates,
+      client: {
+        auth: { getUser: vi.fn() },
+        from(table: string) {
+          const rows: Record<string, unknown> = {
+            transactions: tx,
+            companies: { entity_type: 'enskild_firma' },
+            company_settings: { vat_registered: true },
+          }
+          let pending: { table: string; values: unknown; filters: unknown[][] } | null = null
+          const chain: Record<string, unknown> = {
+            select: () => chain,
+            eq: (...a: unknown[]) => { pending?.filters.push(['eq', ...a]); return chain },
+            is: (...a: unknown[]) => { pending?.filters.push(['is', ...a]); return chain },
+            update: (values: unknown) => { pending = { table, values, filters: [] }; updates.push(pending); return chain },
+            maybeSingle: async () => ({ data: rows[table] ?? null }),
+            then: (resolve: (v: { error: null }) => unknown) => resolve({ error: null }),
+          }
+          return chain
+        },
+      },
+    }
+  }
+
+  it('saves the typed note on the unbooked row and reads again with it', async () => {
+    const rec = recordingSupabase({ id: VALID_TX, description: 'JULA AB', notes: null, journal_entry_id: null, document_id: null })
+    requireAuthMock.mockResolvedValue({ user: { id: 'user-1' }, supabase: rec.client, error: null })
+    const res = await POST(
+      createMockRequest('/x', { method: 'POST', body: body({ user_note: '  Moppar till flyttstädningen  ' }) }),
+      createMockRouteParams({}),
+    )
+    expect(res.status).toBe(200)
+    const upd = rec.updates.find((u) => u.table === 'transactions')
+    expect(upd?.values).toEqual({ notes: 'Moppar till flyttstädningen' })
+    expect(upd?.filters).toContainEqual(['is', 'journal_entry_id', null])
+    const sel = selectAccount.mock.calls[0][0]
+    expect(sel.transaction.userNote).toBe('Moppar till flyttstädningen')
+    expect(sel.transaction.notes).toBe('Moppar till flyttstädningen')
+    const { body: out } = await parseJsonResponse<{ data: { underlag_key: string | null } }>(res)
+    expect(out.data.underlag_key).toMatch(/\|n:/)
+  })
+
+  it('does not touch a booked row but still reads with the note', async () => {
+    const rec = recordingSupabase({ id: VALID_TX, description: 'JULA AB', notes: null, journal_entry_id: 'je-1', document_id: null })
+    requireAuthMock.mockResolvedValue({ user: { id: 'user-1' }, supabase: rec.client, error: null })
+    await POST(createMockRequest('/x', { method: 'POST', body: body({ user_note: 'Moppar' }) }), createMockRouteParams({}))
+    expect(rec.updates.find((u) => u.table === 'transactions')).toBeUndefined()
+    expect(selectAccount.mock.calls[0][0].transaction.userNote).toBe('Moppar')
+  })
+})

@@ -1000,6 +1000,47 @@ export async function upsertCounterpartyTemplate(
     // erase a learned one.
     defaultDimensions: mappingResult.dimensions ?? null,
   })
+
+  await forgetSiblingAssistantReads(supabase, companyId, normalized)
+}
+
+/** How many unbooked rows are scanned for siblings after a booking. */
+const SIBLING_SCAN_LIMIT = 500
+
+/**
+ * Fork (bok.dalavs.se, 2026-09-22): the assistant's stored proposal for an
+ * unbooked row was made before this booking taught the company a template for
+ * the counterparty, and it was never read again (it stayed "fresh" until a new
+ * document arrived). Forget the stored reads of unbooked rows with the same
+ * counterparty key so the next open, or the ten-minute cron, reads again with
+ * the new template among the candidates. Best effort: a booking never fails
+ * because a cached proposal could not be forgotten.
+ */
+async function forgetSiblingAssistantReads(
+  supabase: SupabaseClient,
+  companyId: string,
+  normalized: string,
+): Promise<void> {
+  try {
+    const { data } = await supabase
+      .from('transactions')
+      .select('id, merchant_name, original_description, description')
+      .eq('company_id', companyId)
+      .is('journal_entry_id', null)
+      .eq('is_ignored', false)
+      .order('date', { ascending: false })
+      .limit(SIBLING_SCAN_LIMIT)
+    const ids = ((data ?? []) as Array<{ id: string; merchant_name: string | null; original_description: string | null; description: string | null }>)
+      .filter((row) => {
+        const raw = row.merchant_name || row.original_description || row.description
+        return !!raw && normalizeCounterpartyName(raw) === normalized
+      })
+      .map((row) => row.id)
+    if (ids.length === 0) return
+    await supabase.from('transaction_assistant_reads').delete().eq('company_id', companyId).in('transaction_id', ids)
+  } catch (err) {
+    log.warn('could not forget sibling assistant reads', { companyId, error: err instanceof Error ? err.message : String(err) })
+  }
 }
 
 /**
