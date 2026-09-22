@@ -51,6 +51,12 @@ export const vatReview = defineAgentIntent<VatReviewArgs, CapturedVatReview>({
     'gnubok_get_vat_report',
     'gnubok_vat_close_check',
     'gnubok_query_journal',
+    // Fork 2026-09-22: a found error can be fixed from here (staged, the user
+    // approves each card). The review used to spot a wrong momskonto and then
+    // send the user elsewhere to correct it.
+    'gnubok_correct_entry',
+    'gnubok_reverse_journal_entry',
+    'gnubok_create_voucher',
     'gnubok_load_skill',
     'gnubok_search_tools',
     'gnubok_remember_fact',
@@ -124,6 +130,7 @@ export const vatReview = defineAgentIntent<VatReviewArgs, CapturedVatReview>({
     lines.push('3. Återrapportera Rutor 05-62 i ett kort format användaren kan ögna igenom: SE-försäljning, EU-tjänster, export, ingående/utgående moms per skattesats, reverse-charge-vyer, samt Ruta 49 (att betala / återfå).')
     lines.push('4. Varna explicit för anomalier: stora avvikelser mot förra perioden, oväntade reverse-charge-belopp, saknad motpost.')
     lines.push('5. Påminn om deadline (deklarationsdatum + betalningsdatum) och rekommendera fortsatta steg om allt ser bra ut.')
+    lines.push('6. Hittar du ett fel i en verifikation (fel momskonto, saknad motpost, fel belopp): visa rättelsen och fråga "Ska jag rätta så?". Vid ja: staga den med gnubok_correct_entry (eller gnubok_reverse_journal_entry följt av gnubok_create_voucher), ett förslag per verifikation, med journal_entry_id från gnubok_query_journal. Godkännandekortet visar raderna; ingenting bokförs förrän användaren godkänner.')
     lines.push('')
     lines.push('Svara på svenska, kort och konkret. Använd tabellform när det hjälper användaren skanna siffrorna. Ditt första svar är det första användaren ser.')
     return lines.join('\n')
