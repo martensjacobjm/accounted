@@ -10,6 +10,7 @@ import { getErrorMessage } from '@/lib/errors/get-error-message'
 import { stageSkvManualPrefill } from '@/lib/skatteverket/manual-verifikat-prefill'
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
 import { Loader2 } from 'lucide-react'
+import AskAssistantRowButton from '@/components/agent/AskAssistantRowButton'
 import type {
   SkattekontoBatchResult,
   SkattekontoBatchRowResult,
@@ -225,6 +226,18 @@ export default function SkattekontoBookDialog({
         <div className="flex items-baseline justify-between gap-4">
           <dt className="shrink-0 text-muted-foreground">{t('event_label')}</dt>
           <dd className="text-right">{row.transaktionstext}</dd>
+        </div>
+        {/* Fork: talk to the assistant about this skattekonto row. */}
+        <div className="flex justify-end">
+          <AskAssistantRowButton
+            focus={{
+              kind: 'skattekonto_row',
+              id: row.id,
+              label: `${row.transaktionsdatum} ${row.transaktionstext} ${formatCurrency(amount)}`,
+            }}
+            label="Prata med assistenten om raden"
+            variant="ghost"
+          />
         </div>
         <div className="flex items-baseline justify-between gap-4">
           <dt className="text-muted-foreground">{t('date_label')}</dt>

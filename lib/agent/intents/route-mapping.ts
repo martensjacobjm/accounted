@@ -13,6 +13,8 @@
 // Pure function, no React deps: easy to test, easy to extend with new
 // routes as more intents land.
 
+import { describePage } from './page-context'
+
 export interface RouteIntent {
   intentId: string
   intentArgs: Record<string, unknown>
@@ -23,11 +25,19 @@ export interface RouteIntent {
   labelSuffix: string | null
 }
 
-const GENERAL_HELP = (route: string | null): RouteIntent => ({
-  intentId: 'general.help',
-  intentArgs: { route: route ?? undefined },
-  labelSuffix: null,
-})
+// Fork (bok.dalavs.se, 2026-09-22): the fallback is page-aware. general.help
+// gets the route and query and turns them into context (page-context.ts), and
+// the pill says what the page is about instead of a bare "Fråga <namn>".
+const GENERAL_HELP = (route: string | null, search?: string | null): RouteIntent => {
+  if (!route) return { intentId: 'general.help', intentArgs: {}, labelSuffix: null }
+  const page = describePage(route, search)
+  return {
+    intentId: 'general.help',
+    intentArgs: { route, search: search ?? undefined },
+    contextRef: page.contextRef ?? undefined,
+    labelSuffix: page.labelSuffix,
+  }
+}
 
 export interface RouteIntentOptions {
   /**
@@ -38,6 +48,8 @@ export interface RouteIntentOptions {
    * keeps working instead of opening a chat that 503s (#2204). Omitted = true.
    */
   assistantAvailable?: boolean
+  /** Query string of the current page, passed on to the page-aware fallback. */
+  search?: string | null
 }
 
 export function routeToIntent(
@@ -45,7 +57,7 @@ export function routeToIntent(
   options: RouteIntentOptions = {},
 ): RouteIntent {
   if (!pathname) return GENERAL_HELP(null)
-  if (options.assistantAvailable === false) return GENERAL_HELP(pathname)
+  if (options.assistantAvailable === false) return GENERAL_HELP(pathname, options.search)
 
   const segments = pathname.split('/').filter(Boolean)
   const [first, second] = segments
@@ -126,7 +138,7 @@ export function routeToIntent(
     }
   }
 
-  return GENERAL_HELP(pathname)
+  return GENERAL_HELP(pathname, options.search)
 }
 
 /**

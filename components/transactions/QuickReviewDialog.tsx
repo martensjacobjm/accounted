@@ -36,6 +36,7 @@ import InboxDocumentPicker from '@/components/bookkeeping/InboxDocumentPicker'
 import type { UploadedFile } from '@/components/bookkeeping/DocumentUploadZone'
 import type { AvailableInboxDoc } from '@/components/bookkeeping/InboxDocumentPicker'
 import VatTreatmentSelect from './VatTreatmentSelect'
+import AskAssistantRowButton from '@/components/agent/AskAssistantRowButton'
 import AiCategorizeProposal, { type AiProposalMeta, type AssistantPick } from './AiCategorizeProposal'
 import { readIsFresh, type AssistantRead } from '@/lib/agent/categorize/read-shape'
 import { VAT_TREATMENT_OPTIONS } from './transaction-types'
@@ -620,6 +621,18 @@ export default function QuickReviewDialog({
               onProposal={setAiProposal}
               onTake={takeAssistantPick}
             />
+          )}
+          {/* Fork: a conversation about THIS bank row, with the transaction intent. */}
+          {tx.id && (
+            <div className="flex justify-end pt-1">
+              <AskAssistantRowButton
+                focus={{ kind: 'transaction', id: tx.id, label: `${formatDate(tx.date)} ${tx.description ?? ''} ${formatCurrency(tx.amount)}` }}
+                intentId="transaction.categorization"
+                intentArgs={{ transaction_id: tx.id }}
+                label="Prata med assistenten om raden"
+                variant="ghost"
+              />
+            </div>
           )}
         </div>
 
