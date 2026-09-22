@@ -605,6 +605,34 @@ describe('counterparty-templates', () => {
       expect(inserted[0].counterparty_aliases).toEqual(['spotify ab kortköp'])
     })
 
+    it('fork: forgets the stored assistant reads of unbooked siblings with the same counterparty', async () => {
+      const deleted: unknown[][] = []
+      const siblings = [
+        { id: 'tx-a', merchant_name: 'Jula AB', original_description: null, description: 'JULA AB' },
+        { id: 'tx-b', merchant_name: null, original_description: 'JULA AB MORA', description: 'x' },
+        { id: 'tx-c', merchant_name: 'Biltema', original_description: null, description: 'BILTEMA' },
+      ]
+      const from = (table: string) => {
+        const chain: Record<string, unknown> = {
+          select: () => chain, eq: () => chain, is: () => chain, contains: () => chain,
+          order: () => chain, limit: () => chain,
+          maybeSingle: async () => ({ data: null, error: null }),
+          insert: async () => ({ error: null }),
+          delete: () => ({ eq: () => ({ in: async (_c: string, ids: unknown[]) => { deleted.push(ids); return { error: null } } }) }),
+          then: (resolve: (v: { data: unknown[] }) => unknown) => resolve({ data: table === 'transactions' ? siblings : [] }),
+        }
+        return chain
+      }
+      const tx = makeTransaction({ merchant_name: 'Jula AB', date: '2026-08-07' })
+      await upsertCounterpartyTemplate({ from } as never, 'company-1', tx, mappingResult, 'user_approved')
+      const expected = siblings
+        .filter((s) => normalizeCounterpartyName(s.merchant_name || s.original_description || s.description) === normalizeCounterpartyName('Jula AB'))
+        .map((s) => s.id)
+      expect(expected).toContain('tx-a')
+      expect(expected).not.toContain('tx-c')
+      expect(deleted).toEqual([expected])
+    })
+
     it('does not throw on insert error', async () => {
       const { supabase, enqueue } = createQueuedMockSupabase()
       const tx = makeTransaction({ merchant_name: 'New Company AB' })

@@ -682,15 +682,18 @@ export default function QuickReviewDialog({
           {(docReading || (!!inDialogDocId && inDialogExtraction.status === 'running')) && (
             <AiStatusLine text={t('ai_reading')} />
           )}
-          {tx.id && proposal.source !== 'assistant' && (
+          {/* Fork: shown on the assistant's own pick too, so the person can always
+              tell the assistant what the row is (the note field lives here). */}
+          {tx.id && (
             <AiCategorizeProposal
               key={tx.id}
               transactionId={tx.id}
               open={open}
               hasUnderlag={!!documentId}
               initial={assistantRead && readIsFresh(assistantRead, tx) ? assistantRead : null}
+              initialNote={tx.notes ?? null}
               currentAccount={currentAccount}
-              autoApply={!isTemplateBooking}
+              autoApply={!isTemplateBooking && proposal.source !== 'assistant'}
               onProposal={setAiProposal}
               onTake={takeAssistantPick}
             />
@@ -699,7 +702,7 @@ export default function QuickReviewDialog({
           {tx.id && (
             <div className="flex justify-end pt-1">
               <AskAssistantRowButton
-                focus={{ kind: 'transaction', id: tx.id, label: `${formatDate(tx.date)} ${tx.description ?? ''} ${formatCurrency(tx.amount)}` }}
+                focus={{ kind: 'transaction', id: tx.id, label: `${formatDate(tx.date)} ${tx.description ?? ''} ${formatCurrency(tx.amount, tx.currency)}` }}
                 intentId="transaction.categorization"
                 intentArgs={{ transaction_id: tx.id }}
                 label="Prata med assistenten om raden"

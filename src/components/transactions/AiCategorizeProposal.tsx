@@ -57,6 +57,8 @@ interface Props {
   onProposal?: (meta: AiProposalMeta) => void
   /** The stored read the list already has: shown at once, no fetch. */
   initial?: AssistantRead | null
+  /** Fork: the row's saved note, prefilled in the "tell the assistant" field. */
+  initialNote?: string | null
 }
 
 /** The pick a read carries, complete enough to open a review on; null when the assistant found nothing. */
@@ -103,11 +105,19 @@ export default function AiCategorizeProposal({
   onTake,
   onProposal,
   initial = null,
+  initialNote = null,
 }: Props) {
   const t = useTranslations('tx_quick_review')
   const { identity } = useAgentSheet()
   const [state, setState] = useState<State>(() => (initial ? { status: 'ready', read: initial } : { status: 'loading' }))
   const [expanded, setExpanded] = useState(false)
+  // Fork (bok.dalavs.se, 2026-09-22): the person can say what the row is and get
+  // a new read on the spot. Upstream's line could only be taken or ignored: the
+  // model never saw a word the person wrote.
+  const [note, setNote] = useState(initialNote ?? '')
+  const [asking, setAsking] = useState(false)
+  const [askError, setAskError] = useState<string | null>(null)
+  const [unavailable, setUnavailable] = useState(false)
   // The pick is handed to the dialog once per read, so the person's later
   // edits are never clobbered by a re-render.
   const takenRef = useRef<string | null>(null)
@@ -124,6 +134,7 @@ export default function AiCategorizeProposal({
           body: JSON.stringify({ transaction_id: transactionId }),
         })
         if (!alive) return
+        if (res.status === 503) setUnavailable(true)
         const body = res.ok ? ((await res.json()) as { data?: AssistantRead }) : null
         if (!alive) return
         setState(body?.data ? { status: 'ready', read: body.data } : { status: 'silent' })
@@ -153,12 +164,73 @@ export default function AiCategorizeProposal({
     onTake(pick, { auto: true })
   }, [state, autoApply, onTake, onProposal])
 
+  const askAgain = async () => {
+    const text = note.trim()
+    if (!text || asking) return
+    setAsking(true)
+    setAskError(null)
+    try {
+      const res = await fetch('/api/agent/categorize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transaction_id: transactionId, user_note: text }),
+      })
+      const body = res.ok ? ((await res.json()) as { data?: AssistantRead }) : null
+      if (!body?.data) {
+        setAskError(t('ai_note_failed'))
+        return
+      }
+      // A new read: let it fill the dialog again and report a fresh sample.
+      takenRef.current = null
+      reportedRef.current = false
+      setExpanded(true)
+      setState({ status: 'ready', read: body.data })
+    } catch {
+      setAskError(t('ai_note_failed'))
+    } finally {
+      setAsking(false)
+    }
+  }
+
+  const noteForm = unavailable ? null : (
+    <form
+      className="mt-1.5 flex items-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault()
+        void askAgain()
+      }}
+    >
+      <input
+        type="text"
+        value={note}
+        maxLength={1000}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder={t('ai_note_placeholder')}
+        aria-label={t('ai_note_placeholder')}
+        className="h-8 min-w-0 flex-1 rounded-lg border border-input bg-background px-2 text-[12.5px] placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      />
+      <button
+        type="submit"
+        disabled={asking || note.trim().length === 0}
+        className={cn(QUIET_LINK_CLASS, 'text-[12px] font-medium disabled:opacity-50')}
+      >
+        {asking ? t('ai_note_asking') : t('ai_note_ask')}
+      </button>
+      {askError ? <span className="text-[12px] text-destructive">{askError}</span> : null}
+    </form>
+  )
+
   const line = LINE_CLASS
   const mark = <AgentAvatar avatarId={identity.avatarId} size="xs" className="h-4 w-4 flex-none" alt="" />
 
-  if (state.status === 'silent') return null
-  if (state.status === 'loading') {
-    return <AiStatusLine text={hasUnderlag ? t('ai_reading') : t('ai_looking')} />
+  if (state.status === 'silent') return noteForm
+  if (state.status === 'loading' || asking) {
+    return (
+      <div>
+        <AiStatusLine text={asking ? t('ai_note_asking') : hasUnderlag ? t('ai_reading') : t('ai_looking')} />
+        {noteForm}
+      </div>
+    )
   }
 
   const read = state.read
@@ -173,20 +245,24 @@ export default function AiCategorizeProposal({
 
   if (!pick) {
     return (
-      <p className={line}>
-        {mark}
-        <span>
-          {t('ai_none')}
-          {why ? <span className="ml-1">{why}</span> : null}
-        </span>
-        {more}
-      </p>
+      <div>
+        <p className={line}>
+          {mark}
+          <span>
+            {t('ai_none')}
+            {why ? <span className="ml-1">{why}</span> : null}
+          </span>
+          {more}
+        </p>
+        {noteForm}
+      </div>
     )
   }
 
   const agrees = !!currentAccount && pick.account === currentAccount
 
   return (
+    <div>
     <p className={line}>
       {mark}
       {agrees ? (
@@ -216,5 +292,7 @@ export default function AiCategorizeProposal({
         </button>
       )}
     </p>
+    {noteForm}
+    </div>
   )
 }
