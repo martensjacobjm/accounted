@@ -30,6 +30,8 @@ export const settingsHelp = defineAgentIntent<SettingsHelpArgs, CapturedSettings
 
   tools: [
     'gnubok_search_tools',
+    // Fork 2026-09-22: explain the company's actual choices, not the panel in general.
+    'gnubok_get_company_settings',
     'gnubok_list_skills',
     'gnubok_load_skill',
     'gnubok_remember_fact',
@@ -48,6 +50,7 @@ export const settingsHelp = defineAgentIntent<SettingsHelpArgs, CapturedSettings
       `Användaren är i en inställningspanel${captured.panel ? ` (${captured.panel})` : ''} och vill förstå vad valen påverkar.`,
     )
     lines.push('')
+    lines.push('Läs bolagets faktiska inställningar med gnubok_get_company_settings innan du förklarar, så att svaret gäller det bolaget valt och inte panelen i allmänhet.')
     lines.push('Vänta in användarens fråga. Om de inte säger något, börja med en kort sammanfattning av panelens syfte. Var direkt och svara på svenska.')
     return lines.join('\n')
   },

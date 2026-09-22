@@ -70,6 +70,9 @@ export const invoiceDraft = defineAgentIntent<InvoiceDraftArgs, CapturedInvoiceD
   tools: [
     'gnubok_list_customers',
     'gnubok_create_customer',
+    // Fork 2026-09-22: on /invoices/[id] the assistant could not read the
+    // invoice it was asked about (lines, notes, status).
+    'gnubok_get_invoice',
     'gnubok_load_skill',
     'gnubok_search_tools',
     'gnubok_remember_fact',
@@ -238,6 +241,7 @@ export const invoiceDraft = defineAgentIntent<InvoiceDraftArgs, CapturedInvoiceD
     lines.push('  · Utanför EU: export, 0 %.')
     lines.push('- Föreslå betalningsvillkor, OCR/Bankgiro-uppgifter, eventuell ROT/RUT, EU-text på fakturan vid reverse charge.')
     lines.push('- Du SKAPAR INTE fakturan. Användaren gör det själv i formuläret. Du rådger.')
+    lines.push('- Gäller samtalet en befintlig faktura: läs den först med gnubok_get_invoice (rader, anteckningar, status) och svara utifrån den.')
     lines.push('- Om kunden saknar VAT-nummer men är EU-näringsidkare, säg till: VIES-validering krävs för reverse charge.')
     lines.push('')
     lines.push('Svara på svenska och var direkt: ditt första svar är det första användaren ser.')
