@@ -19,7 +19,8 @@ import AgentChat, {
   type ChatMessage,
 } from './AgentChat'
 import AskConsole, { type AskConsoleMessage } from './AskConsole'
-import { CHAT_INTENT_ID } from '@/lib/agent/ask/persist'
+import { runsOnSingleCallConsole } from '@/lib/agent/ask/runtime'
+import { describePage, renderPageContext } from '@/lib/agent/intents/page-context'
 import type { AgentPanelFloatRect, StoredStagedOperation } from '@/types'
 import {
   DOCK_GUTTER,
@@ -40,7 +41,7 @@ import AgentAvatar from './AgentAvatar'
 import AgentSessionList from './AgentSessionList'
 import SandboxAgentPreview from './SandboxAgentPreview'
 import { useAgentSheet } from './AgentSheetProvider'
-import { useCompanyOptional } from '@/contexts/CompanyContext'
+import { useAssistantAvailable, useCompanyOptional } from '@/contexts/CompanyContext'
 import {
   clearAgentSheetSession,
   writeAgentSheetSession,
@@ -121,6 +122,23 @@ function useMinWidthMd() {
 }
 
 /** Current sidebar column width (--nav-w, set inline on #dash-shell). */
+/**
+ * Fork: the page and row the sheet was opened from, as text for the
+ * single-call console (the fallback when the tool loop is unavailable). The
+ * tool loop gets the same facts through general.help's capture instead.
+ */
+function consolePageContext(args: Record<string, unknown> | undefined): string | null {
+  const route = typeof args?.route === 'string' ? args.route : null
+  if (!route) return null
+  const search = typeof args?.search === 'string' ? args.search : null
+  const f = args?.focus as { kind?: unknown; id?: unknown; label?: unknown } | undefined
+  const focus =
+    f && typeof f.kind === 'string' && typeof f.id === 'string'
+      ? { kind: f.kind, id: f.id, label: typeof f.label === 'string' ? f.label : null }
+      : null
+  return renderPageContext(describePage(route, search), focus).join('\n')
+}
+
 function readNavWidth(): number {
   if (typeof document === 'undefined') return 248
   const shell = document.getElementById('dash-shell')
@@ -302,6 +320,9 @@ export default function AgentSheet({
   }, [reservedWidth, onDockWidthChange])
   useEffect(() => () => onDockWidthChange?.(null), [onDockWidthChange])
   const companyCtx = useCompanyOptional()
+  // Fork: general.help runs on the tool loop (page, row, memories, write
+  // tools) whenever the deployment has it; the console is only the fallback.
+  const assistantAvailable = useAssistantAvailable()
   const isSandbox = companyCtx?.isSandbox ?? false
   const agentName = identity.displayName?.trim() || null
   const sheetTitle = intentLabel(intentId, agentName)
@@ -799,7 +820,7 @@ export default function AgentSheet({
           </button>
         </div>
       ) : loaded ? (
-        loaded.intentId === CHAT_INTENT_ID ? (
+        runsOnSingleCallConsole(loaded.intentId, assistantAvailable) ? (
           // Resumed free-form thread: the single-call console (runs on a local
           // model). Its turns are text-only, so drop any empty/tool rows.
           <AskConsole
@@ -821,12 +842,13 @@ export default function AgentSheet({
             onStatus={onStatus}
           />
         )
-      ) : intentId === CHAT_INTENT_ID ? (
+      ) : runsOnSingleCallConsole(intentId, assistantAvailable) ? (
         // Fresh free-form ask (the FAB's "Fråga min assistent" catch-all).
         <AskConsole
           seedUserMessage={seedUserMessage}
           initialConversationId={null}
           contextRef={contextRef ?? null}
+          pageContext={consolePageContext(intentArgs)}
           onConversationCreated={(id) => setConversationId(id)}
         />
       ) : (

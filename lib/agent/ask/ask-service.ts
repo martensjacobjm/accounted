@@ -5,6 +5,7 @@ import { EmptyModelAnswerError } from './errors'
 import { buildLedgerTools } from './ledger-tools'
 import { buildAssistantSnapshot } from './snapshot'
 import { FISCAL_YEAR_RULE } from '@/lib/agent/fiscal-years'
+import { loadCompanyRules, renderCompanyRulesBlock } from '@/lib/agent/company-rules'
 
 const log = createLogger('agent.ask')
 
@@ -129,13 +130,21 @@ export async function answerAssistantQuestion(req: AskRequest): Promise<AskResul
   const tools: AiToolDef[] = req.userId
     ? buildLedgerTools(req.supabase, req.companyId, req.userId, req.conversationId)
     : []
-  const [profile, snapshot] = await Promise.all([
+  const [profile, snapshot, rules] = await Promise.all([
     companyProfileLine(req.supabase, req.companyId),
     req.userId ? buildAssistantSnapshot(req.supabase, req.companyId) : Promise.resolve(''),
+    // Fork: what the user taught the assistant. The tool-loop chat reads these in
+    // run-turn; the console answered without them.
+    loadCompanyRules(req.supabase, req.companyId),
   ])
 
   const promptParts: string[] = []
   if (profile) promptParts.push(profile)
+  const rulesBlock = renderCompanyRulesBlock(rules)
+  if (rulesBlock.length > 0) {
+    promptParts.push(...rulesBlock)
+    promptParts.push('')
+  }
   if (snapshot) {
     promptParts.push('Företagets nuläge (grunddata, inte hela bokföringen):')
     promptParts.push(snapshot)

@@ -5,13 +5,13 @@ import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
 import AgentChat, { attachStagedOperations, normalizeStoredMessages } from './AgentChat'
 import AskConsole, { type AskConsoleMessage } from './AskConsole'
-import { CHAT_INTENT_ID } from '@/lib/agent/ask/persist'
+import { runsOnSingleCallConsole } from '@/lib/agent/ask/runtime'
 import type { StoredStagedOperation } from '@/types'
 import AgentAvatar from './AgentAvatar'
 import ContextChip from './ContextChip'
 import SandboxAgentPreview from './SandboxAgentPreview'
 import { useAgentSheet } from './AgentSheetProvider'
-import { useCompanyOptional } from '@/contexts/CompanyContext'
+import { useAssistantAvailable, useCompanyOptional } from '@/contexts/CompanyContext'
 
 interface Props {
   conversationId: string
@@ -42,7 +42,7 @@ export default function ChatConversationView({
   // general.help runs on the single-call console; it never stages operations,
   // so the thread is text-only. Empty turns (a historical pure-tool_use row
   // from the old runtime) are dropped rather than rendered as blank rows.
-  const isSingleCall = intentId === CHAT_INTENT_ID
+  const isSingleCall = runsOnSingleCallConsole(intentId, useAssistantAvailable())
   const consoleMessages = useMemo<AskConsoleMessage[]>(
     () =>
       normalizeStoredMessages(rawMessages)

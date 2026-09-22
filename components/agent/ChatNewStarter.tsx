@@ -4,11 +4,11 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import AgentChat from './AgentChat'
 import AskConsole from './AskConsole'
-import { CHAT_INTENT_ID } from '@/lib/agent/ask/persist'
+import { runsOnSingleCallConsole } from '@/lib/agent/ask/runtime'
 import AgentAvatar from './AgentAvatar'
 import SandboxAgentPreview from './SandboxAgentPreview'
 import { useAgentSheet } from './AgentSheetProvider'
-import { useCompanyOptional } from '@/contexts/CompanyContext'
+import { useAssistantAvailable, useCompanyOptional } from '@/contexts/CompanyContext'
 
 // Inline starter used by suggestion chips and ⌘K. Mirrors ChatIntakeStarter
 // but accepts any intent + seed so we don't fork the intake-specific
@@ -27,7 +27,7 @@ export default function ChatNewStarter({
   const isSandbox = companyCtx?.isSandbox ?? false
   const agentName = identity.displayName?.trim() || 'Din assistent'
   const [swapped, setSwapped] = useState(false)
-  const isSingleCall = intentId === CHAT_INTENT_ID
+  const isSingleCall = runsOnSingleCallConsole(intentId, useAssistantAvailable())
 
   const swapToConversation = (id: string) => {
     // Swap once, after the turn is created. For the single-call console both

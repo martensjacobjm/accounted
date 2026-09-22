@@ -14,6 +14,11 @@ vi.mock('../ledger-tools', () => ({
 vi.mock('../snapshot', () => ({
   buildAssistantSnapshot: (...a: unknown[]) => buildAssistantSnapshot(...a),
 }))
+const loadCompanyRules = vi.fn()
+vi.mock('@/lib/agent/company-rules', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/agent/company-rules')>()
+  return { ...actual, loadCompanyRules: (...a: unknown[]) => loadCompanyRules(...a) }
+})
 
 import { answerAssistantQuestion } from '../ask-service'
 import { EmptyModelAnswerError } from '../errors'
@@ -32,9 +37,20 @@ beforeEach(() => {
   generateText.mockResolvedValue({ text: 'Svar', model: 'qwen3.8', usage: {} })
   buildLedgerTools.mockReturnValue([])
   buildAssistantSnapshot.mockResolvedValue('')
+  loadCompanyRules.mockResolvedValue([])
 })
 
 describe('answerAssistantQuestion', () => {
+  it('fork: gives the model the company rules the user taught, not only the question', async () => {
+    loadCompanyRules.mockResolvedValue(['Alla betalningar utanför banken är Wilmas egna pengar (2018)'])
+    await answerAssistantQuestion({ supabase: supabaseWith(null), companyId: 'c1', question: 'Hur bokför jag Jula-kvittot?' })
+    const call = generateText.mock.calls[0][0]
+    expect(loadCompanyRules).toHaveBeenCalledWith(expect.anything(), 'c1')
+    expect(call.prompt).toContain('Bolagets regler')
+    expect(call.prompt).toContain('- Alla betalningar utanför banken är Wilmas egna pengar (2018)')
+    expect(call.prompt.indexOf('Bolagets regler')).toBeLessThan(call.prompt.indexOf('Fråga:'))
+  })
+
   it('calls generateText on the assistant tier and returns the answer + model', async () => {
     const result = await answerAssistantQuestion({
       supabase: supabaseWith({ name: 'Nordvik Bygg AB', entity_type: 'aktiebolag' }),
