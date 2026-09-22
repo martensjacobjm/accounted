@@ -14,6 +14,7 @@ import { TD_CLASS, TH_CLASS, QUIET_LINK_CLASS, HOVER_REVEAL_CLASS } from '@/comp
 import { cn, formatCurrency, formatDate } from '@/lib/utils'
 import { formatVoucher } from '@/lib/bookkeeping/voucher-series-resolver'
 import type { ReconciliationAccount, ReconciliationItem } from '@/lib/reconciliation/schemas'
+import AskAssistantRowButton from '@/components/agent/AskAssistantRowButton'
 
 /**
  * Rows of the reconciliation flow (concept reconflow, the pairs):
@@ -265,6 +266,17 @@ export function PairRow({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
+          {/* Fork: talk to the assistant about this reconciliation row. */}
+          <AskAssistantRowButton
+            focus={{
+              kind: 'reconciliation_item',
+              id: item.item_id,
+              label: `${item.date ?? ''} ${item.description ?? ''} ${money(item.amount)} (${item.side})`,
+            }}
+            label="Prata"
+            variant="ghost"
+            className="h-7 px-2 text-xs text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+          />
         </span>
       </td>
     </tr>

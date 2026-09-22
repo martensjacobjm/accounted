@@ -54,6 +54,7 @@ import type {
 } from '@/types'
 import { OperationPreview, AccountNamesContext } from '@/components/pending-operations/OperationPreview'
 import { useAccountNamesSource } from '@/components/pending-operations/use-account-names'
+import AskAssistantRowButton from '@/components/agent/AskAssistantRowButton'
 import {
   operationLabel,
   singleActionWarning,
@@ -960,7 +961,16 @@ export default function PendingOperationsPage() {
                       </Badge>
                     )}
                     <div className="min-w-0 flex-1">
-                      <div className="text-[13px] leading-snug">{op.title}</div>
+                      <div className="text-[13px] leading-snug">
+                        {op.title}
+                        <span className="ml-1 inline-block align-middle">
+                          <AskAssistantRowButton
+                            focus={{ kind: 'pending_operation', id: op.id, label: op.title }}
+                            label="Förklara"
+                            variant="ghost"
+                          />
+                        </span>
+                      </div>
                       <div className="mt-0.5 text-xs text-muted-foreground">
                         {sub}
                         {op.status === 'rejected' && op.rejection_reason
