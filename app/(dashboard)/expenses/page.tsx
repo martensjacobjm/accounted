@@ -47,6 +47,7 @@ import { useCanWrite } from '@/lib/hooks/use-can-write'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { getErrorMessage } from '@/lib/errors/get-error-message'
 import type { BookingTemplateLibrary } from '@/types'
+import AskAssistantRowButton from '@/components/agent/AskAssistantRowButton'
 
 interface ExpenseClaim {
   id: string
@@ -1078,6 +1079,13 @@ export default function ExpenseClaimsPage() {
                     c.description
                   )}
                   <span className="ml-2 text-muted-foreground">{c.expense_account}</span>
+                  <span className="ml-2 inline-block align-middle" onClick={(e) => e.stopPropagation()}>
+                    <AskAssistantRowButton
+                      focus={{ kind: 'expense_claim', id: c.id, label: `${c.expense_date} ${c.description} ${formatCurrency(c.amount_sek)} ${c.claimant_name}` }}
+                      label="Prata"
+                      variant="ghost"
+                    />
+                  </span>
                 </td>
                 <td className={`${TD_CLASS} hidden md:table-cell`}>{c.claimant_name}</td>
                 <td className={`${TD_CLASS} hidden lg:table-cell`}>
