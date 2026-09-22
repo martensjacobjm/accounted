@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useAgentSheet } from './AgentSheetProvider'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { Loader2, X } from 'lucide-react'
 import AgentAvatar from './AgentAvatar'
 import { collapsedStatusLabel } from './agent-status'
@@ -46,6 +46,7 @@ const UPSELL_DISMISSED_KEY = 'agent-upsell-dismissed'
 export default function AgentTrigger({ hidden = false }: { hidden?: boolean }) {
   const { openAgentSheet, expandAgentSheet, isOpen, collapsed, status, identity } = useAgentSheet()
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const router = useRouter()
   const hasAi = useCapability(CAPABILITY.ai)
   const assistantAvailable = useAssistantAvailable()
@@ -135,12 +136,9 @@ export default function AgentTrigger({ hidden = false }: { hidden?: boolean }) {
   // conversation, and stranding a half-finished booking is a worse outcome than
   // a pill over the editor. (/bookkeeping list, /bookkeeping/new and
   // /bookkeeping/year-end are not the editor and keep the fresh-open FAB.)
-  if (!collapsed) {
-    const segs = pathname?.split('/').filter(Boolean) ?? []
-    if (segs[0] === 'bookkeeping' && segs[1] && segs[1] !== 'year-end' && segs[1] !== 'new') {
-      return null
-    }
-  }
+  // Fork (bok.dalavs.se, Jacob 2026-09-22: "den ska kunna vara med överallt"):
+  // the pill stays on the verifikation editor too; general.help now knows which
+  // verifikat is open (page-context.ts) so it earns its place there.
   // Pre-onboarding: no agent_profile.verified_at yet. The FAB would lead
   // into a generic chat with no specialization. Better to hide it until
   // the user has finished /onboarding/agent. (A collapsed session implies the
@@ -151,7 +149,7 @@ export default function AgentTrigger({ hidden = false }: { hidden?: boolean }) {
   // Without the tool-loop runtime (OpenAI-compatible or unconfigured AI, #2204)
   // every route dispatches to general.help: the single-call console runs on
   // any provider, so the pill stays but never opens a chat that would 503.
-  const dispatch = routeToIntent(pathname, { assistantAvailable })
+  const dispatch = routeToIntent(pathname, { assistantAvailable, search: searchParams?.toString() || null })
   // AI assistant runs on a paid cloud service. Without the capability, opening
   // the sheet would land the user in a chat whose send is dead. Keep the FAB
   // visible (it's the conversion surface) but route it to billing instead.

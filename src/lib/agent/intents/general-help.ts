@@ -1,6 +1,7 @@
 import { defineAgentIntent } from './types'
 import { SONNET_MODEL, EFFORT_STANDARD } from '@/lib/agent/composer/client'
 import { renderAgentGroundRules } from './shared-rules'
+import { describePage, renderPageContext, type PageContext, type PageFocus } from './page-context'
 
 // general.help: always-present "Fråga min assistent" from the top nav.
 //
@@ -15,14 +16,21 @@ import { renderAgentGroundRules } from './shared-rules'
 // users).
 
 interface GeneralHelpArgs {
-  // Currently routed only with the URL the user is on. We don't capture page
-  // contents: the chat sheet sits over the page and is intentionally
-  // page-agnostic so the user can keep working underneath.
+  // The URL the user is on. Fork (bok.dalavs.se, Jacob 2026-09-22): the route
+  // is turned into page context (title, entity in focus, tools to call first,
+  // typical tasks) so the assistant is useful on every page, not only the
+  // seven with a dedicated intent. The sheet still sits over the page.
   route?: string
+  /** Query string of the page (filters, period), optional. */
+  search?: string
+  /** A row the user pointed at (row-level "Prata med assistenten" buttons). */
+  focus?: PageFocus | null
 }
 
 interface GeneralHelpCaptured {
   route: string | null
+  page: PageContext | null
+  focus: PageFocus | null
 }
 
 export const generalHelp = defineAgentIntent<GeneralHelpArgs, GeneralHelpCaptured>({
@@ -240,7 +248,11 @@ export const generalHelp = defineAgentIntent<GeneralHelpArgs, GeneralHelpCapture
   // consolidated answer.
   thinking: { effort: EFFORT_STANDARD },
 
-  capture: async ({ route }) => ({ route: route ?? null }),
+  capture: async ({ route, search, focus }) => ({
+    route: route ?? null,
+    page: route ? describePage(route, search ?? null) : null,
+    focus: focus && typeof focus.kind === 'string' && typeof focus.id === 'string' ? { kind: focus.kind, id: focus.id, label: focus.label ?? null } : null,
+  }),
 
   promptTemplate: ({ captured, profileSummary }) => {
     const lines: string[] = []
@@ -248,12 +260,13 @@ export const generalHelp = defineAgentIntent<GeneralHelpArgs, GeneralHelpCapture
       lines.push(`Företagets profil: ${profileSummary}`)
       lines.push('')
     }
-    if (captured.route) {
-      lines.push(`Användaren befinner sig på sidan: ${captured.route}`)
+    if (captured.page) {
+      lines.push(...renderPageContext(captured.page, captured.focus))
+      lines.push('')
+    } else {
+      lines.push('Användaren öppnade ditt fönster med "Fråga min assistent". Inget specifikt ärende ännu.')
       lines.push('')
     }
-    lines.push('Användaren öppnade ditt fönster med "Fråga min assistent". Inget specifikt ärende ännu.')
-    lines.push('')
     lines.push(renderAgentGroundRules())
     lines.push('')
     lines.push('Härifrån kan du (använd verktygen: citera siffrorna):')
@@ -272,7 +285,11 @@ export const generalHelp = defineAgentIntent<GeneralHelpArgs, GeneralHelpCapture
     lines.push('')
     lines.push('Bra rytm för analytiska frågor: (1) anropa rätt läsverktyg, (2) svara med konkreta siffror från resultatet, (3) lägg till en kort förklaring eller nästa-steg-rekommendation om det är meningsfullt. Hellre verkligt svar än "gå till Rapporter och titta själv".')
     lines.push('')
-    lines.push('Vänta in användarens fråga. Hälsa kort och fråga vad du kan hjälpa till med. Var direkt: svaret du skriver nu är det första användaren ser.')
+    if (captured.page) {
+      lines.push('Börja med ÖPPNINGEN ovan (verktyg först, sedan två meningar om läget och de troligaste åtgärderna). Var direkt: svaret du skriver nu är det första användaren ser.')
+    } else {
+      lines.push('Vänta in användarens fråga. Hälsa kort och fråga vad du kan hjälpa till med. Var direkt: svaret du skriver nu är det första användaren ser.')
+    }
     return lines.join('\n')
   },
 })

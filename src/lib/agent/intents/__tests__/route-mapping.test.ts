@@ -16,9 +16,9 @@ describe('routeToIntent without the tool-loop runtime', () => {
     ]) {
       const out = routeToIntent(route, { assistantAvailable: false })
       expect(out.intentId).toBe('general.help')
-      expect(out.intentArgs).toEqual({ route })
-      expect(out.contextRef).toBeUndefined()
-      expect(out.labelSuffix).toBeNull()
+      expect(out.intentArgs.route).toBe(route)
+      // Fork: the fallback is page-aware, so it anchors to the page or entity.
+      expect(out.contextRef).toMatch(/^(page:|invoice:|supplier_invoice:|journal_entry:)/)
     }
   })
 
@@ -42,9 +42,11 @@ describe('routeToIntent', () => {
       const out = routeToIntent(route)
       expect(out.intentId).toBe('general.help')
       expect(out.intentArgs.route).toBe(route)
-      expect(out.labelSuffix).toBeNull()
-      expect(out.contextRef).toBeUndefined()
+      expect(out.contextRef).toBe(`page:${route}`)
     }
+    // Fork: list pages say what they are about in the pill label.
+    expect(routeToIntent('/transactions').labelSuffix).toBe('om transaktionerna')
+    expect(routeToIntent('/').labelSuffix).toBeNull()
   })
 
   it('routes /invoices/new to invoice.draft without an id', () => {
@@ -93,9 +95,11 @@ describe('routeToIntent', () => {
     // returns a sensible default in case anything else queries it.
     const out = routeToIntent('/bookkeeping/je-7')
     expect(out.intentId).toBe('general.help')
-    expect(out.intentArgs).toEqual({ route: '/bookkeeping/je-7' })
-    expect(out.labelSuffix).toBeNull()
-    expect(out.contextRef).toBeUndefined()
+    expect(out.intentArgs.route).toBe('/bookkeeping/je-7')
+    // Fork: the pill is back on the editor and knows the page (the id here is
+    // not a uuid, so no entity is read from it).
+    expect(out.labelSuffix).toBe('om verifikationen')
+    expect(out.contextRef).toBe('page:/bookkeeping/je-7')
   })
 
   it('routes /bookkeeping/year-end to bokslut.step (matches the page button: no two-agents-on-one-page)', () => {
