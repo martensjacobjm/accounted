@@ -107,6 +107,11 @@ interface AskConsoleProps {
   onConversationCreated?: (id: string) => void
   /** Vertical padding override for the scroller (the full-page chat uses px-6 py-8). */
   scrollerClassName?: string
+  /**
+   * Fork: what the user is looking at (page and row), sent as `context` on every
+   * question so the fallback console answers about that page instead of blind.
+   */
+  pageContext?: string | null
 }
 
 export default function AskConsole({
@@ -116,6 +121,7 @@ export default function AskConsole({
   seedUserMessage,
   onConversationCreated,
   scrollerClassName,
+  pageContext,
 }: AskConsoleProps) {
   const hasAi = useCapability(CAPABILITY.ai)
   const [messages, setMessages] = useState<AskConsoleMessage[]>(initialMessages ?? [])
@@ -153,6 +159,7 @@ export default function AskConsole({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             question,
+            ...(pageContext ? { context: pageContext } : {}),
             persist: true,
             conversation_id: conversationIdRef.current,
             // context_ref only binds a FRESH thread; a resumed one already has it.
@@ -200,7 +207,7 @@ export default function AskConsole({
         setPending(false)
       }
     },
-    [pending, contextRef, onConversationCreated],
+    [pending, contextRef, pageContext, onConversationCreated],
   )
 
   // Auto-fire a seeded question exactly once (a suggestion chip the user
