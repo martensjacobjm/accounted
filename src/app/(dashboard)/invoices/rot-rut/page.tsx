@@ -30,6 +30,7 @@ import { computeRefusedShares } from '@/lib/invoices/rot-rut-reclaim'
 import { expectedRotRutPayoutAmount } from '@/lib/invoices/rot-rut-payout-matching'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { todayIsoStockholm } from '@/lib/dates/iso'
+import AskAssistantRowButton from '@/components/agent/AskAssistantRowButton'
 
 const RotRutPayoutDialog = dynamic(() => import('@/components/invoices/RotRutPayoutDialog'), {
   ssr: false,
@@ -544,6 +545,11 @@ export default function RotRutOverviewPage() {
                             {t('reclaimed_link')}
                           </Link>
                         )}
+                        <AskAssistantRowButton
+                          focus={{ kind: 'rot_rut_request', id: request.id, label: `${request.name} ${formatCurrency(Number(request.requested_total))}` }}
+                          label="Prata med assistenten"
+                          variant="ghost"
+                        />
                       </div>
                     </td>
                     <td className={`${TD_CLASS} whitespace-nowrap`}>{formatDate(request.created_at)}</td>
