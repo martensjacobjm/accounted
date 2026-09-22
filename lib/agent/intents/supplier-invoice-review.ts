@@ -1,6 +1,8 @@
 import { defineAgentIntent } from './types'
 import { OPUS_MODEL, EFFORT_DEEP } from '@/lib/agent/composer/client'
 import { renderAgentGroundRules } from './shared-rules'
+import { renderChannelContextForModel } from '@/lib/documents/channel-context-notes'
+import type { InboxChannelContext } from '@/types'
 
 // supplier_invoice.review: "Fråga din assistent" from a supplier invoice
 // detail page. Helps the user verify a supplier invoice before attestering
@@ -51,6 +53,8 @@ interface CapturedSupplierInvoiceReview {
     payment_reference: string | null
     is_credit_note: boolean | null
     document_id: string | null
+    /** Fork: the note typed on the supplier invoice. */
+    notes?: string | null
   } | null
   supplier: {
     id: string
@@ -58,6 +62,9 @@ interface CapturedSupplierInvoiceReview {
     org_number: string | null
     vat_number: string | null
     country: string | null
+    /** Fork: the supplier's default cost account and its note. */
+    default_expense_account?: string | null
+    notes?: string | null
   } | null
   items: {
     description: string | null
@@ -82,6 +89,8 @@ interface CapturedSupplierInvoiceReview {
   // the AI has already extracted.
   inbox_extraction: Record<string, unknown> | null
   document_extraction: Record<string, unknown> | null
+  /** Fork: what people said about the underlag (upload comment, WhatsApp answers, caption). */
+  human_text?: string[]
 }
 
 // ISO code as stored, uppercased, or null when nothing usable is there. A blank
@@ -177,7 +186,7 @@ export const supplierInvoiceReview = defineAgentIntent<
     const { data: invoice } = await supabase
       .from('supplier_invoices')
       .select(
-        'id, supplier_id, arrival_number, supplier_invoice_number, invoice_date, due_date, status, currency, exchange_rate, subtotal, vat_amount, vat_amount_sek, total, total_sek, vat_treatment, reverse_charge, payment_reference, is_credit_note, document_id',
+        'id, supplier_id, arrival_number, supplier_invoice_number, invoice_date, due_date, status, currency, exchange_rate, subtotal, vat_amount, vat_amount_sek, total, total_sek, vat_treatment, reverse_charge, payment_reference, is_credit_note, document_id, notes',
       )
       .eq('id', supplier_invoice_id)
       .eq('company_id', companyId)
@@ -207,7 +216,7 @@ export const supplierInvoiceReview = defineAgentIntent<
       supplierId
         ? supabase
             .from('suppliers')
-            .select('id, name, org_number, vat_number, country')
+            .select('id, name, org_number, vat_number, country, default_expense_account, notes')
             .eq('id', supplierId)
             .eq('company_id', companyId)
             .maybeSingle()
@@ -229,7 +238,7 @@ export const supplierInvoiceReview = defineAgentIntent<
       documentId
         ? supabase
             .from('invoice_inbox_items')
-            .select('extracted_data')
+            .select('extracted_data, channel_context')
             .eq('document_id', documentId)
             .eq('company_id', companyId)
             .maybeSingle()
@@ -266,6 +275,7 @@ export const supplierInvoiceReview = defineAgentIntent<
           ((invoice as { payment_reference?: string | null }).payment_reference) ?? null,
         is_credit_note: ((invoice as { is_credit_note?: boolean | null }).is_credit_note) ?? null,
         document_id: documentId,
+        notes: ((invoice as { notes?: string | null }).notes) ?? null,
       },
       supplier: supplier
         ? {
@@ -274,6 +284,8 @@ export const supplierInvoiceReview = defineAgentIntent<
             org_number: ((supplier as { org_number?: string | null }).org_number) ?? null,
             vat_number: ((supplier as { vat_number?: string | null }).vat_number) ?? null,
             country: ((supplier as { country?: string | null }).country) ?? null,
+            default_expense_account: ((supplier as { default_expense_account?: string | null }).default_expense_account) ?? null,
+            notes: ((supplier as { notes?: string | null }).notes) ?? null,
           }
         : null,
       items: ((items ?? []) as {
@@ -310,6 +322,9 @@ export const supplierInvoiceReview = defineAgentIntent<
       })),
       inbox_extraction: (inboxRow as { extracted_data?: Record<string, unknown> | null } | null)?.extracted_data ?? null,
       document_extraction: (docRow as { extracted_data?: Record<string, unknown> | null } | null)?.extracted_data ?? null,
+      human_text: renderChannelContextForModel(
+        (inboxRow as { channel_context?: InboxChannelContext | null } | null)?.channel_context ?? null,
+      ),
     }
   },
 
@@ -337,7 +352,11 @@ export const supplierInvoiceReview = defineAgentIntent<
       if (s.org_number) supplierLine.push(`org.nr ${s.org_number}`)
       if (s.vat_number) supplierLine.push(`VAT ${s.vat_number}`)
       lines.push(`- ${supplierLine.join(' ')}`)
+      if (s.default_expense_account) lines.push(`- Leverantörens standardkonto: ${s.default_expense_account}`)
+      if (s.notes?.trim()) lines.push(`- Anteckning om leverantören: ${s.notes.trim().slice(0, 400)}`)
     }
+    if (inv.notes?.trim()) lines.push(`- Anteckning på fakturan (skriven av användaren): ${inv.notes.trim().slice(0, 500)}`)
+    for (const h of captured.human_text ?? []) lines.push(`- ${h}`)
     lines.push(`- Status: ${inv.status ?? '?'} | Datum: ${inv.invoice_date ?? '?'} | Förfaller: ${inv.due_date ?? '?'}`)
     const invCurrency = normalizeCurrency(inv.currency)
     lines.push(

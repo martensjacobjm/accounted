@@ -52,6 +52,17 @@ export interface RouteIntentOptions {
   search?: string | null
 }
 
+/**
+ * Fork 2026-09-22: an entity segment is an id only when it is a UUID. Pages like
+ * /invoices/rot-rut, /invoices/recurring and /supplier-invoices/payment-files
+ * used to open "om denna faktura" with invoice_id='rot-rut'; they now fall
+ * through to the page-aware general.help.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+function isEntityId(segment: string | undefined): segment is string {
+  return !!segment && UUID_RE.test(segment)
+}
+
 export function routeToIntent(
   pathname: string | null | undefined,
   options: RouteIntentOptions = {},
@@ -72,7 +83,7 @@ export function routeToIntent(
   }
 
   // /invoices/[id] and /invoices/[id]/credit: entity in focus.
-  if (first === 'invoices' && second && second !== 'new') {
+  if (first === 'invoices' && isEntityId(second)) {
     return {
       intentId: 'invoice.draft',
       intentArgs: { invoice_id: second },
@@ -85,7 +96,7 @@ export function routeToIntent(
   // /supplier-invoices/new has no entity to review yet: fall through to
   // general.help so the agent doesn't load a heavy Opus intent on an empty
   // capture.
-  if (first === 'supplier-invoices' && second && second !== 'new') {
+  if (first === 'supplier-invoices' && isEntityId(second)) {
     return {
       intentId: 'supplier_invoice.review',
       intentArgs: { supplier_invoice_id: second },

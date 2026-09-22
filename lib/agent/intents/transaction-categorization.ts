@@ -33,7 +33,14 @@ interface CapturedTransaction {
     amount: number | null
     currency: string | null
     counterparty_name: string | null
+    // Fork 2026-09-22: what the user wrote and what the bank said about the row.
+    notes?: string | null
+    reference?: string | null
+    bank_text?: string | null
+    counterparty_account?: string | null
   } | null
+  /** Fork: the review dialog's stored proposal, so the chat knows what it said and why. */
+  assistant_read?: { account: string | null; reasoning: string; confidence: number } | null
   // Each linked receipt/invoice in a flattened "what we already know" shape.
   // Empty when the user has not attached anything yet.
   underlag: {
@@ -118,7 +125,7 @@ export const transactionCategorization = defineAgentIntent<
       .select(
         // merchant_name / amount_sek / exchange_rate feed the candidate scorer
         // (currency-aware amount comparison + merchant similarity).
-        'id, date, description, merchant_name, amount, currency, amount_sek, exchange_rate, document_id, journal_entry_id',
+        'id, date, description, merchant_name, amount, currency, amount_sek, exchange_rate, document_id, journal_entry_id, notes, reference, original_description, counterparty_account, counterparty_iban',
       )
       .eq('id', transaction_id)
       .eq('company_id', companyId)
@@ -139,6 +146,7 @@ export const transactionCategorization = defineAgentIntent<
       { data: inboxItems },
       { data: directDoc },
       { data: entryDocs },
+      { data: storedRead },
     ] = await Promise.all([
       supabase
         .from('receipts')
@@ -168,6 +176,12 @@ export const transactionCategorization = defineAgentIntent<
             .eq('company_id', companyId)
             .eq('is_current_version', true)
         : Promise.resolve({ data: [] }),
+      supabase
+        .from('transaction_assistant_reads')
+        .select('account, reasoning, confidence')
+        .eq('company_id', companyId)
+        .eq('transaction_id', transaction_id)
+        .maybeSingle(),
     ])
 
     const underlag: CapturedTransaction['underlag'] = []
@@ -353,6 +367,13 @@ export const transactionCategorization = defineAgentIntent<
     }
 
     return {
+      assistant_read: storedRead
+        ? {
+            account: ((storedRead as { account?: string | null }).account) ?? null,
+            reasoning: String((storedRead as { reasoning?: string | null }).reasoning ?? ''),
+            confidence: Number((storedRead as { confidence?: number | string | null }).confidence ?? 0),
+          }
+        : null,
       transaction: tx
         ? {
             id: tx.id,
@@ -361,6 +382,13 @@ export const transactionCategorization = defineAgentIntent<
             amount: tx.amount as number | null,
             currency: tx.currency as string | null,
             counterparty_name: null,
+            notes: (tx.notes as string | null) ?? null,
+            reference: (tx.reference as string | null) ?? null,
+            bank_text:
+              (tx.original_description as string | null) && tx.original_description !== tx.description
+                ? (tx.original_description as string)
+                : null,
+            counterparty_account: ((tx.counterparty_account ?? tx.counterparty_iban) as string | null) ?? null,
           }
         : null,
       underlag,
@@ -383,9 +411,21 @@ export const transactionCategorization = defineAgentIntent<
     lines.push(`- transaction_id: ${tx.id}`)
     lines.push(`- Datum: ${tx.date ?? 'okänt'}`)
     lines.push(`- Beskrivning: ${tx.description ?? '(saknas)'}`)
+    if (tx.bank_text) lines.push(`- Bankens text: ${tx.bank_text}`)
     lines.push(
       `- Belopp: ${tx.amount != null ? `${tx.amount.toLocaleString('sv-SE')} ${tx.currency ?? 'SEK'}` : '(okänt)'}`,
     )
+    if (tx.reference) lines.push(`- Referens: ${tx.reference}`)
+    if (tx.counterparty_account) lines.push(`- Motpartens konto: ${tx.counterparty_account}`)
+    if (tx.notes?.trim()) lines.push(`- Användarens anteckning på raden: ${tx.notes.trim().slice(0, 500)}`)
+    if (captured.assistant_read) {
+      const r = captured.assistant_read
+      lines.push(
+        r.account
+          ? `- Granskningsdialogen föreslog konto ${r.account} (säkerhet ${Math.round(r.confidence * 100)} %): ${r.reasoning.slice(0, 400)}`
+          : `- Granskningsdialogen hittade inget konto som passar: ${r.reasoning.slice(0, 400)}`,
+      )
+    }
     lines.push('')
 
     if (captured.underlag.length === 0) {

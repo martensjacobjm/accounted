@@ -2367,7 +2367,7 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
         }}
         item={selected}
         payer={registerExpensePayer}
-        uploaderNote={selected.channel_context?.channel === 'web' ? selected.channel_context.user_note ?? null : null}
+        uploaderNote={selected.channel_context?.user_note ?? null}
         onSuccess={async () => {
           await Promise.all([fetchItems(), handleSelect(selected.id)])
           router.refresh()

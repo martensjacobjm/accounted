@@ -1,6 +1,7 @@
 import type { Extension, ExtensionContext } from '@/lib/extensions/types'
 import {
   loadCompanyRulesForExtraction,
+  buildHintsForItem,
   parseKindHint,
   sanitiseUserNote,
 } from './lib/extraction-hints'
@@ -1479,7 +1480,7 @@ export const invoiceInboxExtension: Extension = {
 
         const { data: item } = await ctx.supabase
           .from('invoice_inbox_items')
-          .select('id, document_id, correlation_id, created_supplier_invoice_id')
+          .select('id, document_id, correlation_id, created_supplier_invoice_id, kind_hint, channel_context, email_body_text')
           .eq('id', id)
           .eq('company_id', ctx.companyId)
           .maybeSingle()
@@ -1542,11 +1543,15 @@ export const invoiceInboxExtension: Extension = {
 
         try {
           const buffer = Buffer.from(await blob.arrayBuffer())
+          // Fork 2026-09-22: "Tolka om" read the document blind and overwrote the
+          // first reading, so the comment, the chosen kind and the rules taught
+          // since were lost. It reads the same stored hints as the upload now.
           const extraction = await extractInvoiceFields({
             buffer,
             mimeType: doc.mime_type,
             fileName: doc.file_name,
             ownCompany: await fetchOwnCompanyIdentity(ctx.supabase, ctx.companyId),
+            hints: await buildHintsForItem(ctx.supabase, ctx.companyId, item),
           })
           const { data: extracted } = extraction
           await mirrorExtractionToDocument(item.document_id, {
@@ -3335,7 +3340,7 @@ export const invoiceInboxExtension: Extension = {
         // document instead of at the database.
         const { data: item, error: itemError } = await ctx.supabase
           .from('invoice_inbox_items')
-          .select('id, matched_transaction_id, created_journal_entry_id, created_supplier_invoice_id')
+          .select('id, matched_transaction_id, created_journal_entry_id, created_supplier_invoice_id, extracted_data')
           .eq('id', id)
           .eq('company_id', ctx.companyId)
           .maybeSingle()
@@ -3423,7 +3428,12 @@ export const invoiceInboxExtension: Extension = {
         const emptyProposalExtras = (settlementAccount: string) => ({
           entry_date: (tx as Transaction).date,
           transaction: txSummary,
-          fallback_lines: buildFallbackKonteringLines(tx as Transaction, settlementAccount),
+          // Fork: the document was read; its cost account fills the blank side.
+          fallback_lines: buildFallbackKonteringLines(
+            tx as Transaction,
+            settlementAccount,
+            ((item as { extracted_data?: { suggestedAccount?: string | null } | null }).extracted_data?.suggestedAccount) ?? null,
+          ),
           ...rulesExtra(),
         })
 

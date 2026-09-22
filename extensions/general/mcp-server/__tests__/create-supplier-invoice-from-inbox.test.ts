@@ -189,11 +189,33 @@ const baseExtracted = {
   lineItems: [
     { description: 'Konsulttimmar', quantity: 10, unit_price: 100, line_total: 1000, vat_rate: 25, vat_amount: 250 },
   ],
+  // The reading's document-level account (fork 2026-09-22: the tool no longer
+  // falls back to a silent 4000 when nothing names an account).
+  suggestedAccount: '6550',
 }
 
 describe('gnubok_create_supplier_invoice_from_inbox: execute', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('fork: uses the reading account and refuses a line that has no account at all', async () => {
+    const tool = tools.find((t) => t.name === 'gnubok_create_supplier_invoice_from_inbox')!
+    const withReading = makeMock({
+      inbox: { id: 'inbox-1', status: 'received', extracted_data: baseExtracted, matched_supplier_id: 'supplier-1', created_supplier_invoice_id: null, document_id: 'doc-1' },
+    })
+    const ok = (await tool.execute({ inbox_item_id: 'inbox-1', dry_run: true }, 'company-1', 'user-1', withReading)) as {
+      preview: { items_preview: Array<{ account_number: string }> }
+    }
+    expect(ok.preview.items_preview[0].account_number).toBe('6550')
+
+    const noAccount = makeMock({
+      inbox: {
+        id: 'inbox-1', status: 'received', extracted_data: { ...baseExtracted, suggestedAccount: null },
+        matched_supplier_id: 'supplier-1', created_supplier_invoice_id: null, document_id: 'doc-1',
+      },
+    })
+    await expect(tool.execute({ inbox_item_id: 'inbox-1', dry_run: true }, 'company-1', 'user-1', noAccount)).rejects.toThrow(/inget kostnadskonto/)
   })
 
   it('dry_run returns preview without inserting pending_operations', async () => {
@@ -945,6 +967,7 @@ describe('gnubok_create_supplier_invoice_from_inbox: due date default and total 
     lineItems: [
       { description: 'Bankavgift', quantity: 1, unit_price: 130, line_total: 130, vat_rate: 0, vat_amount: 0 },
     ],
+    suggestedAccount: '6570',
   }
 
   function inboxFor(extracted: Record<string, unknown>) {

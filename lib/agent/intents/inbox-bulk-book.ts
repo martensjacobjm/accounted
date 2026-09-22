@@ -1,5 +1,7 @@
 import { defineAgentIntent } from './types'
 import { SONNET_MODEL, EFFORT_STANDARD } from '@/lib/agent/composer/client'
+import { renderChannelContextForModel } from '@/lib/documents/channel-context-notes'
+import type { InboxChannelContext } from '@/types'
 
 // inbox.bulk-book: "Fråga assistenten" on a multi-selection in the Underlag
 // view (Dokumentinkorgen). Unlike transaction.categorization (which keys off the
@@ -36,6 +38,8 @@ interface CapturedInboxItem {
   tx_currency: string | null
   tx_amount_sek: number | null
   tx_description: string | null
+  /** Fork 2026-09-22: what people said about the underlag (comment, WhatsApp answers, caption). */
+  human_text?: string[]
 }
 
 interface CapturedInboxBulk {
@@ -124,7 +128,7 @@ export const inboxBulkBook = defineAgentIntent<InboxBulkBookArgs, CapturedInboxB
 
     const { data: rows } = await supabase
       .from('invoice_inbox_items')
-      .select('id, matched_transaction_id, created_journal_entry_id, created_supplier_invoice_id, extracted_data')
+      .select('id, matched_transaction_id, created_journal_entry_id, created_supplier_invoice_id, extracted_data, channel_context')
       .eq('company_id', companyId)
       .in('id', ids)
 
@@ -176,6 +180,7 @@ export const inboxBulkBook = defineAgentIntent<InboxBulkBookArgs, CapturedInboxB
         tx_currency: tx ? String(tx.currency ?? 'SEK').toUpperCase() : null,
         tx_amount_sek: tx ? txSek(tx) : null,
         tx_description: tx?.description ?? null,
+        human_text: renderChannelContextForModel((r.channel_context ?? null) as InboxChannelContext | null),
       }
     })
 
@@ -211,6 +216,8 @@ export const inboxBulkBook = defineAgentIntent<InboxBulkBookArgs, CapturedInboxB
       if (bank) parts.push(`bank=${bank}`)
       if (it.tx_date) parts.push(`datum=${it.tx_date}`)
       lines.push(`  • ${parts.join(', ')}`)
+      // The person's own words decide category and purpose when they exist.
+      for (const h of it.human_text ?? []) lines.push(`      ${h}`)
     }
     if (notMatched.length > 0) {
       lines.push('')

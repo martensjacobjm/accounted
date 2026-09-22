@@ -12,6 +12,11 @@ vi.mock('@/extensions/general/invoice-inbox/lib/extract-invoice-fields', () => (
   fetchOwnCompanyIdentity: vi.fn().mockResolvedValue({ orgNumber: null, name: null }),
 }))
 
+const buildHintsForItemMock = vi.fn()
+vi.mock('@/extensions/general/invoice-inbox/lib/extraction-hints', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/extensions/general/invoice-inbox/lib/extraction-hints')>()
+  return { ...actual, buildHintsForItem: (...a: unknown[]) => buildHintsForItemMock(...a) }
+})
 vi.mock('@/lib/rate-limits/inbox', () => ({
   checkInboxUploadRateLimit: vi.fn().mockResolvedValue({ ok: true }),
 }))
@@ -83,6 +88,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(checkInboxUploadRateLimit).mockResolvedValue({ ok: true })
   vi.mocked(hasCapability).mockResolvedValue(true)
+  buildHintsForItemMock.mockResolvedValue({ kindHint: null, note: null, companyRules: [], accountChart: [] })
 })
 
 describe('POST /items/:id/retry-extraction', () => {
@@ -178,6 +184,27 @@ describe('POST /items/:id/retry-extraction', () => {
     const { status, body } = await parseJsonResponse<{ data: { extracted_data: { totals: { total: number } } } }>(res)
     expect(status).toBe(200)
     expect(body.data.extracted_data.totals.total).toBe(125)
+  })
+
+  it('fork: reads the item again with its stored comment, kind and rules', async () => {
+    const { supabase, enqueue } = createQueuedMockSupabase()
+    const item = {
+      id: 'item-1', document_id: 'doc-1', correlation_id: null, created_supplier_invoice_id: null,
+      kind_hint: 'receipt', channel_context: { channel: 'web', user_note: 'moppar, konto 5460' }, email_body_text: null,
+    }
+    enqueue({ data: item, error: null })
+    enqueue({ data: { is_sandbox: false }, error: null })
+    enqueue({ data: { storage_path: 'p.pdf', mime_type: 'application/pdf', file_name: 'k.pdf' }, error: null })
+    enqueue({ data: null, error: null })
+    enqueue({ data: null, error: null })
+    serviceDownloadMock.mockResolvedValue({ data: new Blob([new Uint8Array([1])], { type: 'application/pdf' }), error: null })
+    const hints = { kindHint: 'receipt', note: 'moppar, konto 5460', companyRules: ['r'], accountChart: ['5460'] }
+    buildHintsForItemMock.mockResolvedValueOnce(hints)
+    vi.mocked(extractInvoiceFields).mockResolvedValueOnce(EXTRACTION_SUCCESS as never)
+    const res = await retryRoute.handler(makeReq(), buildCtx(supabase))
+    expect(res.status).toBe(200)
+    expect(buildHintsForItemMock).toHaveBeenCalledWith(expect.anything(), 'company-1', expect.objectContaining({ kind_hint: 'receipt', channel_context: item.channel_context }))
+    expect(vi.mocked(extractInvoiceFields).mock.calls[0][0]).toMatchObject({ hints })
   })
 
   it('re-links the supplier on retry, matching a foreign supplier by VAT number', async () => {

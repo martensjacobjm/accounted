@@ -72,3 +72,14 @@ describe('buildFallbackKonteringLines', () => {
     expect(lines[1].account_number).toBe('1932')
   })
 })
+
+describe('fork 2026-09-22: the reading fills the cost side', () => {
+  it('puts the reading account on the cost line of an outflow, and ignores non-accounts', async () => {
+    const { buildFallbackKonteringLines } = await import('../lib/fallback-kontering')
+    const out = buildFallbackKonteringLines({ amount: -1187.4, currency: 'SEK' }, '1930', '5460')
+    expect(out[0]).toMatchObject({ account_number: '5460', debit_amount: 1187.4 })
+    expect(out[1]).toMatchObject({ account_number: '1930', credit_amount: 1187.4 })
+    expect(buildFallbackKonteringLines({ amount: -10, currency: 'SEK' }, '1930', 'abc')[0].account_number).toBe('')
+    expect(buildFallbackKonteringLines({ amount: -10, currency: 'SEK' }, '1930')[0].account_number).toBe('')
+  })
+})

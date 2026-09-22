@@ -813,8 +813,12 @@ export async function extractInvoiceFields(
     // The uploader's declared kind is authoritative (fork): kind_hint already
     // wins in the UI resolver, this keeps extracted_data itself consistent.
     if (input.hints?.kindHint) validated.documentKind = input.hints.kindHint
-    // An account named in the uploader's comment beats the model's guess.
-    const notedAccount = accountFromNote(input.hints?.note)
+    // An account named in the uploader's comment beats the model's guess, but
+    // only one that exists in the company's chart (fork 2026-09-22): without
+    // the check "laptop 6995 kr" made 6995 the account. No chart, no override;
+    // the model still read the comment through the hint block.
+    const chart = input.hints?.accountChart && input.hints.accountChart.length > 0 ? new Set(input.hints.accountChart) : null
+    const notedAccount = chart ? accountFromNote(input.hints?.note, chart) : null
     if (notedAccount) validated.suggestedAccount = notedAccount
 
     return {

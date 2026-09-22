@@ -340,3 +340,23 @@ describe('supplier_invoice.review capture', () => {
     expect(captured.recent_invoices_from_supplier[0].exchange_rate).toBe(11.5)
   })
 })
+
+describe('fork 2026-09-22: the review reads what people wrote', () => {
+  it('renders the invoice note, the supplier default and note, and the upload comment', () => {
+    const base = makeCaptured({ currency: 'SEK' } as Fixture)
+    const out = supplierInvoiceReview.promptTemplate({
+      captured: {
+        ...base,
+        invoice: base.invoice ? { ...base.invoice, notes: 'Gäller hösten, ska periodiseras' } : null,
+        supplier: base.supplier ? { ...base.supplier, default_expense_account: '6540', notes: 'IT-leverantör' } : null,
+        human_text: ['Uppladdarens kommentar: molnlagring till kontoret'],
+      },
+      profileSummary: null,
+      activeMemory: [],
+    })
+    expect(out).toContain('Anteckning på fakturan (skriven av användaren): Gäller hösten, ska periodiseras')
+    expect(out).toContain('Leverantörens standardkonto: 6540')
+    expect(out).toContain('Anteckning om leverantören: IT-leverantör')
+    expect(out).toContain('- Uppladdarens kommentar: molnlagring till kontoret')
+  })
+})
