@@ -2,6 +2,7 @@ import { defineAgentIntent } from './types'
 import { SONNET_MODEL, EFFORT_STANDARD } from '@/lib/agent/composer/client'
 import { accountFromNote, liabilityFromNote } from '@/lib/expenses/suggest-expense-account'
 import type { InboxChannelContext, InvoiceExtractionResult } from '@/types'
+import { renderChannelContextForModel } from '@/lib/documents/channel-context-notes'
 
 // inbox.item-dialog: "Prata med assistenten om underlaget" on ONE item in the
 // Underlag pane (bok.dalavs.se fork, Jacob 2026-09-22: "man ska kunna prata med
@@ -19,7 +20,7 @@ interface InboxItemDialogArgs {
   item_id: string
 }
 
-type MatchedTx = { date: string | null; amount: number | null; description: string | null } | null
+type MatchedTx = { id: string; date: string | null; amount: number | null; description: string | null } | null
 
 interface CapturedInboxItem {
   item: {
@@ -37,6 +38,8 @@ interface CapturedInboxItem {
     line_items: string[]
     /** The comment typed at upload (web) or in the WhatsApp intake. */
     uploader_note: string | null
+    /** Fork: other human text on the item (WhatsApp answers, caption, representation, mail subject). */
+    other_text: string[]
     note_account: string | null
     note_liability: string | null
     matched_tx: MatchedTx
@@ -63,6 +66,9 @@ export const inboxItemDialog = defineAgentIntent<InboxItemDialogArgs, CapturedIn
     'gnubok_list_accounts',
     'gnubok_suggest_categories',
     'gnubok_create_voucher',
+    // Fork 2026-09-22: a matched item is booked through its bank row, so the
+    // row and the underlag end up on one verifikat instead of two.
+    'gnubok_categorize_transaction',
     'gnubok_load_skill',
     'gnubok_search_tools',
     'gnubok_remember_fact',
@@ -95,18 +101,33 @@ export const inboxItemDialog = defineAgentIntent<InboxItemDialogArgs, CapturedIn
     if (row.matched_transaction_id) {
       const { data: tx } = await supabase
         .from('transactions')
-        .select('date, amount, description')
+        .select('id, date, amount, description')
         .eq('company_id', companyId)
         .eq('id', row.matched_transaction_id as string)
         .maybeSingle()
       if (tx) {
         matchedTx = {
+          id: (tx.id as string | null) ?? (row.matched_transaction_id as string),
           date: (tx.date as string | null) ?? null,
           amount: tx.amount == null ? null : Number(tx.amount),
           description: (tx.description as string | null) ?? null,
         }
       }
     }
+
+    // A number in the comment is an account only if the company has it (fork
+    // 2026-09-22): "laptop 6995 kr" is a price. No chart read, no account.
+    const { data: chartRows } = await supabase
+      .from('chart_of_accounts')
+      .select('account_number')
+      .eq('company_id', companyId)
+      .eq('is_active', true)
+      .limit(3000)
+    const chart = new Set(
+      ((chartRows ?? []) as Array<{ account_number: string | number | null }>)
+        .map((r) => (r.account_number == null ? '' : String(r.account_number)))
+        .filter((n) => /^\d{4}$/.test(n)),
+    )
 
     const status: NonNullable<CapturedInboxItem['item']>['status'] =
       row.created_journal_entry_id || row.created_supplier_invoice_id
@@ -134,7 +155,8 @@ export const inboxItemDialog = defineAgentIntent<InboxItemDialogArgs, CapturedIn
           .filter((d) => d.length > 0)
           .slice(0, 12),
         uploader_note: note,
-        note_account: accountFromNote(note),
+        other_text: renderChannelContextForModel(ctx).filter((l) => !l.startsWith('Uppladdarens kommentar:')),
+        note_account: chart.size > 0 ? accountFromNote(note, chart) : null,
         note_liability: liabilityFromNote(note),
         matched_tx: matchedTx,
       },
@@ -175,10 +197,11 @@ export const inboxItemDialog = defineAgentIntent<InboxItemDialogArgs, CapturedIn
       if (it.note_account) lines.push(`  kontonummer i kommentaren=${it.note_account} (använd det)`)
       if (it.note_liability) lines.push(`  motkonto i kommentaren=${it.note_liability} (använd det)`)
     }
+    for (const l of it.other_text ?? []) lines.push(`  ${l} (sagt av en människa om underlaget; sammanhang, inte konto eller belopp)`)
     if (it.status === 'already_booked') lines.push('  STATUS: redan bokfört. Bokför inte igen; svara på frågor om det.')
     else if (it.matched_tx)
       lines.push(
-        `  STATUS: matchat mot banktransaktion ${it.matched_tx.date ?? ''} ${it.matched_tx.amount != null ? it.matched_tx.amount.toLocaleString('sv-SE') + ' SEK' : ''} "${it.matched_tx.description ?? ''}": betalt från företagskontot, motkonto 1930.`,
+        `  STATUS: matchat mot banktransaktion transaction_id=${it.matched_tx.id} ${it.matched_tx.date ?? ''} ${it.matched_tx.amount != null ? it.matched_tx.amount.toLocaleString('sv-SE') + ' SEK' : ''} "${it.matched_tx.description ?? ''}": betalt från företagskontot. Bokför det genom banktransaktionen med gnubok_categorize_transaction({ transaction_id: "${it.matched_tx.id}", category, account_override: kostnadskontot, vat_treatment, notes: vad som köpts }); underlaget följer då med till verifikationen. Använd INTE gnubok_create_voucher här: då blir banktransaktionen obokad och händelsen bokförs två gånger.`,
       )
     else lines.push('  STATUS: ingen banktransaktion är matchad. Då är det antingen betalt med egna pengar (motkonto 2018 egna insättningar i enskild firma och handels-/kommanditbolag, 2893 skuld till ägaren i aktiebolag, om inte företagets regler säger annat) eller en obetald faktura (2440).')
     lines.push(`  bolagsform enligt registret=${captured.entity_type ?? 'okänd'}`)
@@ -187,7 +210,11 @@ export const inboxItemDialog = defineAgentIntent<InboxItemDialogArgs, CapturedIn
     lines.push('- DU BÖRJAR samtalet. Säg i en mening vad du ser (motpart, belopp, vad som köpts) och ställ BARA de frågor du inte kan besvara ur underlaget och kommentaren: vad köptes/vad ska det användas till, och vem betalade (företagskontot, egna pengar, obetalt). Finns svaren redan i kommentaren eller reglerna: fråga inte, föreslå direkt.')
     lines.push('- Läs dokumentet med gnubok_get_document_content om raderna ovan inte räcker. Kolla hur motparten bokförts förut med gnubok_query_journal({ text: "<motpart>", limit: 5 }) och följ mönstret om underlaget inte motsäger det.')
     lines.push('- FÖRSLAGET ska alltid innehålla: kostnadskonto (BAS 4-siffrigt, t.ex. 5460 förbrukningsmaterial, 5480 arbetskläder, 5611 drivmedel, 5800 resekostnader, 6110 kontorsmaterial, 6540 IT-tjänster), momskonto 2641 med beloppet från underlaget (ingen moms på utländska kvitton utan svensk moms), motkonto (1930 / 2018 / 2893 / 2440) och datum = underlagets datum. Visa raderna som en kort tabell och fråga "Ska jag bokföra så?".')
-    lines.push('- När användaren säger ja: anropa gnubok_create_voucher med inbox_item_id=' + it.item_id + ' och raderna, så att underlaget blir verifikationen (BFL 5 kap 6 §). Godkännandekortet visar beloppen; upprepa dem inte och säg inte att något är "stagat".')
+    if (it.matched_tx) {
+      lines.push('- När användaren säger ja: anropa gnubok_categorize_transaction för transaction_id=' + it.matched_tx.id + ' (se STATUS ovan). Godkännandekortet visar beloppen; upprepa dem inte och säg inte att något är "stagat".')
+    } else {
+      lines.push('- När användaren säger ja: anropa gnubok_create_voucher med inbox_item_id=' + it.item_id + ' och raderna, så att underlaget blir verifikationen (BFL 5 kap 6 §). Godkännandekortet visar beloppen; upprepa dem inte och säg inte att något är "stagat".')
+    }
     lines.push('- Lär dig: när användaren rättar dig eller ger en regel som gäller framåt ("allt som är privat betalt går på 2018"), spara den med gnubok_remember_fact.')
     lines.push('- Svara på svenska, kort och direkt. Inga kontonummer i löptext utom i förslagstabellen.')
     return lines.join('\n')

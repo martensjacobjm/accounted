@@ -37,6 +37,7 @@ describe('inbox.item-dialog', () => {
           channel_context: { channel: 'web', user_note: 'Arbetskläder. Rätt kontering: 5480 mot 2018.' },
         },
       },
+      { data: [{ account_number: '5480' }, { account_number: '5460' }] },
     ])
     const captured = await inboxItemDialog.capture({ item_id: ITEM_ID }, ctx(supabase))
     expect(captured.item).toMatchObject({
@@ -76,13 +77,41 @@ describe('inbox.item-dialog', () => {
           channel_context: null,
         },
       },
-      { data: { date: '2026-08-07', amount: -1187.4, description: 'JULA MORA' } },
+      { data: { id: 'tx-1', date: '2026-08-07', amount: -1187.4, description: 'JULA MORA' } },
+      { data: [] },
     ])
     const captured = await inboxItemDialog.capture({ item_id: ITEM_ID }, ctx(supabase))
     expect(captured.item?.status).toBe('matched')
     const prompt = inboxItemDialog.promptTemplate({ captured, profileSummary: null, activeMemory: [] })
-    expect(prompt).toContain('betalt från företagskontot, motkonto 1930')
+    expect(prompt).toContain('betalt från företagskontot')
     expect(prompt).toContain('JULA MORA')
+    // Fork 2026-09-22: a matched item is booked through the bank row, never as a
+    // separate voucher (that left the bank row unbooked: double booking).
+    expect(prompt).toContain('gnubok_categorize_transaction')
+    expect(prompt).toContain('transaction_id=tx-1')
+    expect(prompt).toMatch(/INTE gnubok_create_voucher/)
+    expect(inboxItemDialog.tools).toContain('gnubok_categorize_transaction')
+  })
+
+  it('never turns a price in the comment into an account, and shows the other human text', async () => {
+    const { supabase, enqueueMany } = createQueuedMockSupabase()
+    enqueueMany([
+      { data: { entity_type: 'enskild_firma' } },
+      {
+        data: {
+          id: ITEM_ID, document_id: 'doc-1', kind_hint: null, matched_transaction_id: null,
+          created_journal_entry_id: null, created_supplier_invoice_id: null,
+          extracted_data: { supplier: { name: 'Elgiganten' }, invoice: {}, totals: { total: 6995 }, lineItems: [] },
+          channel_context: { channel: 'whatsapp', user_note: 'laptop 6995 kr', caption: 'dator till kontoret' },
+        },
+      },
+      { data: [{ account_number: '5410' }, { account_number: '6540' }] },
+    ])
+    const captured = await inboxItemDialog.capture({ item_id: ITEM_ID }, ctx(supabase))
+    expect(captured.item?.note_account).toBeNull()
+    const prompt = inboxItemDialog.promptTemplate({ captured, profileSummary: null, activeMemory: [] })
+    expect(prompt).not.toContain('kontonummer i kommentaren')
+    expect(prompt).toContain('Bildtext: dator till kontoret')
   })
 
   it('tells the assistant to pick the item again when it cannot be read', async () => {

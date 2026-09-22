@@ -49,6 +49,7 @@ import { formatCurrency, formatDate } from '@/lib/utils'
 import { getErrorMessage } from '@/lib/errors/get-error-message'
 import { CURRENCIES, type BookingTemplateLibrary } from '@/types'
 import AskAssistantRowButton from '@/components/agent/AskAssistantRowButton'
+import { isCostAccount } from '@/lib/expenses/suggest-expense-account'
 
 interface ExpenseClaim {
   id: string
@@ -95,7 +96,12 @@ interface ExtractedReceipt {
   invoice?: { invoiceDate?: string | null; currency?: string | null } | null
   supplier?: { name?: string | null } | null
   lineItems?: Array<{ description?: string | null }> | null
+  /** Fork 2026-09-22: the reading's cost account (from the comment or the model). */
+  suggestedAccount?: string | null
 }
+
+/** The cost account the form opens with before anything is read. */
+const DEFAULT_EXPENSE_ACCOUNT = '5410'
 
 const OWNER_VALUE = 'owner'
 const NO_RECEIPT_VALUE = 'none'
@@ -177,7 +183,7 @@ export default function ExpenseClaimsPage() {
   const [amount, setAmount] = useState('')
   const [vatAmount, setVatAmount] = useState('')
   const [currency, setCurrency] = useState('SEK')
-  const [expenseAccount, setExpenseAccount] = useState('5410')
+  const [expenseAccount, setExpenseAccount] = useState(DEFAULT_EXPENSE_ACCOUNT)
   // Step 2 booking editor (the Bokio model): one owner of the rows at a
   // time. Seller country + cost account generate them, OR an applied
   // template owns them, OR a manual edit freezes them into `bookingRows`.
@@ -673,6 +679,13 @@ export default function ExpenseClaimsPage() {
       }
       const suggested = [firstLine, supplier].filter(Boolean).join(', ')
       setDescription((prev) => (suggested && (force || !prev) ? suggested : prev))
+      // Fork 2026-09-22: the reading's account was computed and then ignored; the
+      // form always opened on 5410. It now takes the reading's cost account unless
+      // the person already picked another one.
+      const readAccount = extracted.suggestedAccount
+      if (isCostAccount(readAccount)) {
+        setExpenseAccount((prev) => (force || prev === DEFAULT_EXPENSE_ACCOUNT ? readAccount : prev))
+      }
     },
     [],
   )
@@ -703,6 +716,9 @@ export default function ExpenseClaimsPage() {
       try {
         const form = new FormData()
         form.append('file', file)
+        // An utlägg is a receipt someone already paid: say so, so the reading
+        // does not guess supplier invoice from the layout.
+        form.append('kind_hint', 'receipt')
         const res = await fetch('/api/extensions/ext/invoice-inbox/upload', {
           method: 'POST',
           body: form,

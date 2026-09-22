@@ -126,6 +126,29 @@ describe('extractInvoiceFields', () => {
     expect(data.confidence).toBe(1)
   })
 
+  it('fork: an account named in the comment wins only when it exists in the chart', async () => {
+    mockCreate.mockReturnValueOnce(aiResponse({ ...VALID_RESULT, suggestedAccount: '6540' }))
+    const ok = await extractInvoiceFields({
+      buffer: Buffer.from('%PDF'), mimeType: 'application/pdf', fileName: 'a.pdf',
+      hints: { note: 'Förbrukning, konto 5460', accountChart: ['5460', '6540'] },
+    })
+    expect(ok.data.suggestedAccount).toBe('5460')
+
+    mockCreate.mockReturnValueOnce(aiResponse({ ...VALID_RESULT, suggestedAccount: '5410' }))
+    const price = await extractInvoiceFields({
+      buffer: Buffer.from('%PDF'), mimeType: 'application/pdf', fileName: 'b.pdf',
+      hints: { note: 'laptop 6995 kr', accountChart: ['5410', '6540'] },
+    })
+    expect(price.data.suggestedAccount).toBe('5410')
+
+    mockCreate.mockReturnValueOnce(aiResponse({ ...VALID_RESULT, suggestedAccount: '5410' }))
+    const noChart = await extractInvoiceFields({
+      buffer: Buffer.from('%PDF'), mimeType: 'application/pdf', fileName: 'c.pdf',
+      hints: { note: 'laptop 6995 kr' },
+    })
+    expect(noChart.data.suggestedAccount).toBe('5410')
+  })
+
   it('promotes a single prominent amount into the editable total (bankintyg/avtal)', async () => {
     // Zero amounts are noise ("Totalt månadspris: 0 kr"), so this document
     // still has exactly one meaningful figure and it becomes TOTALT.

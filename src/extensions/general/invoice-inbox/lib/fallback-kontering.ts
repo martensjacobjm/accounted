@@ -36,6 +36,12 @@ export interface FallbackKonteringLine {
 export function buildFallbackKonteringLines(
   tx: FallbackKonteringTx,
   settlementAccount: string,
+  /**
+   * Fork 2026-09-22: the reading's cost account (the uploader's comment, checked
+   * against the chart, or the model). Upstream left the cost side blank even
+   * when the document had been read; only a 4-digit account is taken.
+   */
+  costAccount?: string | null,
 ): FallbackKonteringLine[] {
   const sek = resolveSekAmountOrNull(tx.amount, tx.amount_sek, tx.currency, tx.exchange_rate)
   if (sek == null) return []
@@ -44,7 +50,7 @@ export function buildFallbackKonteringLines(
   if (total <= 0) return []
 
   const costLine: FallbackKonteringLine = {
-    account_number: '',
+    account_number: typeof costAccount === 'string' && /^\d{4}$/.test(costAccount) ? costAccount : '',
     debit_amount: 0,
     credit_amount: 0,
     description: '',

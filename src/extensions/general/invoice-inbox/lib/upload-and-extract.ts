@@ -3,7 +3,8 @@ import { uploadDocument } from '@/lib/core/documents/document-service'
 import { extractInvoiceFields, emptyResult, fetchOwnCompanyIdentity } from './extract-invoice-fields'
 import { mirrorExtractionToDocument } from './mirror-extraction'
 import type { InboxKindHint } from './resend-inbound'
-import { loadCompanyRulesForExtraction, type ExtractionHints, type UploadKindHint } from './extraction-hints'
+import { buildHintsForItem, mergeUserNote, type ExtractionHints, type UploadKindHint } from './extraction-hints'
+import type { InboxChannelContext } from '@/types'
 import { getAiStatus } from '@/lib/ai'
 import { hasCapability } from '@/lib/entitlements/has-capability'
 import { CAPABILITY } from '@/lib/entitlements/keys'
@@ -307,7 +308,7 @@ async function processArchivedDocumentInner(
     const { data: existingItem, error: itemLookupError } = await supabase
       .from('invoice_inbox_items')
       .select(
-        'id, status, extracted_data, matched_supplier_id, matched_transaction_id, kind_hint, created_supplier_invoice_id, created_journal_entry_id',
+        'id, status, extracted_data, matched_supplier_id, matched_transaction_id, kind_hint, created_supplier_invoice_id, created_journal_entry_id, channel_context',
       )
       .eq('company_id', companyId)
       .eq('document_id', doc.id)
@@ -327,6 +328,7 @@ async function processArchivedDocumentInner(
       kind_hint: InboxKindHint | null
       created_supplier_invoice_id: string | null
       created_journal_entry_id: string | null
+      channel_context?: InboxChannelContext | null
     }> | null)?.[0]
     if (adopted) {
       // Dedupe keeps ONE archived copy of the bytes (7-year retention, and a
@@ -383,6 +385,22 @@ async function processArchivedDocumentInner(
           } else {
             hintAfter = incomingHint
           }
+        }
+      }
+      // Fork 2026-09-22: the same file sent again with a new comment kept the old
+      // item and dropped the comment. Keep it on the item, so the next read
+      // ("Tolka om", the chat, the booking proposal) sees it.
+      const incomingNote = opts.userHints?.note ?? null
+      if (incomingNote) {
+        const before = adopted.channel_context ?? null
+        const merged = mergeUserNote(before?.user_note, incomingNote)
+        if (merged && merged !== (before?.user_note ?? null)) {
+          const { error: noteErr } = await supabase
+            .from('invoice_inbox_items')
+            .update({ channel_context: { ...(before ?? { channel: 'web' }), user_note: merged } })
+            .eq('id', adopted.id)
+            .eq('company_id', companyId)
+          if (noteErr) console.error('[invoice-inbox] Failed to keep the new comment on the adopted item:', noteErr)
         }
       }
       try {
@@ -494,15 +512,24 @@ async function processArchivedDocumentInner(
             ? 'ai_unconfigured'
             : null
 
-  // Fork: uploader hints + company rules travel with both extraction paths.
+  // Fork: what is stored on the row is what the extraction reads, on every
+  // channel. One object feeds both inserts below and buildHintsForItem, so the
+  // web comment, the WhatsApp caption and the e-mail text reach the model the
+  // same way "Tolka om" later reads them back.
+  const channelContext: InboxChannelContext | null = opts.channelMeta
+    ? { channel: 'whatsapp', caption: sanitiseCaption(opts.channelMeta.caption) }
+    : opts.userHints?.note
+      ? { channel: 'web', user_note: opts.userHints.note }
+      : null
+  const kindHint = emailMeta?.kindHint ?? opts.userHints?.kindHint ?? null
   const extractionHints =
     syncSkipReason !== null
       ? null
-      : {
-          kindHint: opts.userHints?.kindHint ?? emailMeta?.kindHint ?? null,
-          note: opts.userHints?.note ?? null,
-          companyRules: await loadCompanyRulesForExtraction(supabase, companyId),
-        }
+      : await buildHintsForItem(supabase, companyId, {
+          kind_hint: kindHint,
+          channel_context: channelContext,
+          email_body_text: emailMeta?.bodyText ?? null,
+        })
 
   if (opts.deferExtraction && syncSkipReason === null) {
     // Staged path: extraction WILL call Bedrock, so create the row now and
@@ -528,18 +555,14 @@ async function processArchivedDocumentInner(
         email_body_text: emailMeta?.bodyText || null,
         resend_email_id: emailMeta?.resendEmailId || null,
         resend_attachment_id: emailMeta?.resendAttachmentId || null,
-        kind_hint: emailMeta?.kindHint ?? opts.userHints?.kindHint ?? null,
+        kind_hint: kindHint,
         raw_email_payload: emailMeta?.messageId
           ? { messageId: emailMeta.messageId, filename: file.name }
           : null,
         correlation_id: correlationId,
         matched_transaction_id: matchedTransactionId ?? null,
         whatsapp_message_id: opts.channelMeta?.whatsappMessageId ?? null,
-        channel_context: opts.channelMeta
-          ? { channel: 'whatsapp', caption: sanitiseCaption(opts.channelMeta.caption) }
-          : opts.userHints?.note
-            ? { channel: 'web', user_note: opts.userHints.note }
-            : null,
+        channel_context: channelContext,
       })
       .select('*')
       .single()
@@ -627,7 +650,7 @@ async function processArchivedDocumentInner(
       email_body_text: emailMeta?.bodyText || null,
       resend_email_id: emailMeta?.resendEmailId || null,
       resend_attachment_id: emailMeta?.resendAttachmentId || null,
-      kind_hint: emailMeta?.kindHint ?? opts.userHints?.kindHint ?? null,
+      kind_hint: kindHint,
       raw_email_payload: emailMeta?.messageId
         ? { messageId: emailMeta.messageId, filename: file.name }
         : null,
@@ -637,11 +660,7 @@ async function processArchivedDocumentInner(
       // keep the payload statically checkable; a null insert is identical to
       // omitting the column, so the email/upload behavior is unchanged.
       whatsapp_message_id: opts.channelMeta?.whatsappMessageId ?? null,
-      channel_context: opts.channelMeta
-        ? { channel: 'whatsapp', caption: sanitiseCaption(opts.channelMeta.caption) }
-        : opts.userHints?.note
-          ? { channel: 'web', user_note: opts.userHints.note }
-          : null,
+      channel_context: channelContext,
     })
     .select('*')
     .single()

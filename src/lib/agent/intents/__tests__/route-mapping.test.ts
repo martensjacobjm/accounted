@@ -8,8 +8,8 @@ describe('routeToIntent without the tool-loop runtime', () => {
   it('dispatches every specialized route to general.help', () => {
     for (const route of [
       '/invoices/new',
-      '/invoices/abc-123',
-      '/supplier-invoices/sup-1',
+      '/invoices/3f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b',
+      '/supplier-invoices/5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d',
       '/bookkeeping/year-end',
       '/kpi',
       '/settings/invoicing',
@@ -58,27 +58,27 @@ describe('routeToIntent', () => {
   })
 
   it('routes /invoices/[id] to invoice.draft with the id', () => {
-    const out = routeToIntent('/invoices/abc-123')
+    const out = routeToIntent('/invoices/3f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b')
     expect(out.intentId).toBe('invoice.draft')
-    expect(out.intentArgs).toEqual({ invoice_id: 'abc-123' })
-    expect(out.contextRef).toBe('invoice:abc-123')
+    expect(out.intentArgs).toEqual({ invoice_id: '3f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b' })
+    expect(out.contextRef).toBe('invoice:3f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b')
     expect(out.labelSuffix).toBe('om denna faktura')
   })
 
   it('routes /invoices/[id]/credit to invoice.draft with the parent id', () => {
     // The credit-note form is still an invoice context: same intent, same
     // captured entity. The :credit suffix isn't its own intent.
-    const out = routeToIntent('/invoices/abc-123/credit')
+    const out = routeToIntent('/invoices/3f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b/credit')
     expect(out.intentId).toBe('invoice.draft')
-    expect(out.intentArgs).toEqual({ invoice_id: 'abc-123' })
-    expect(out.contextRef).toBe('invoice:abc-123')
+    expect(out.intentArgs).toEqual({ invoice_id: '3f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b' })
+    expect(out.contextRef).toBe('invoice:3f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b')
   })
 
   it('routes /supplier-invoices/[id] to supplier_invoice.review', () => {
-    const out = routeToIntent('/supplier-invoices/sup-1')
+    const out = routeToIntent('/supplier-invoices/5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d')
     expect(out.intentId).toBe('supplier_invoice.review')
-    expect(out.intentArgs).toEqual({ supplier_invoice_id: 'sup-1' })
-    expect(out.contextRef).toBe('supplier_invoice:sup-1')
+    expect(out.intentArgs).toEqual({ supplier_invoice_id: '5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d' })
+    expect(out.contextRef).toBe('supplier_invoice:5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d')
     expect(out.labelSuffix).toBe('om denna leverantörsfaktura')
   })
 
@@ -149,15 +149,15 @@ describe('contextRefToTarget', () => {
    * shows up as a chip that never renders, not as a wrong link.
    */
   it('resolves each ref the app writes today', () => {
-    expect(contextRefToTarget('invoice:abc-123')).toEqual({
+    expect(contextRefToTarget('invoice:3f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b')).toEqual({
       label: 'Faktura',
-      href: '/invoices/abc-123',
+      href: '/invoices/3f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b',
     })
-    expect(contextRefToTarget('supplier_invoice:abc-123')).toEqual({
+    expect(contextRefToTarget('supplier_invoice:3f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b')).toEqual({
       label: 'Leverantörsfaktura',
-      href: '/supplier-invoices/abc-123',
+      href: '/supplier-invoices/3f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b',
     })
-    expect(contextRefToTarget('transaction:abc-123')).toEqual({
+    expect(contextRefToTarget('transaction:3f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b')).toEqual({
       label: 'Transaktion',
       href: '/transactions',
     })
@@ -201,5 +201,12 @@ describe('contextRefToTarget', () => {
     // href: kpi discards its id, so the same assertion there would pass even
     // if the parser dropped everything after the second colon.
     expect(contextRefToTarget('invoice:abc:2026')?.href).toBe('/invoices/abc%3A2026')
+  })
+
+  it('fork: page segments are not entity ids (rot-rut, recurring, payment-files)', () => {
+    for (const path of ['/invoices/rot-rut', '/invoices/recurring', '/supplier-invoices/payment-files']) {
+      expect(routeToIntent(path).intentId).toBe('general.help')
+    }
+    expect(routeToIntent('/invoices/3f1a2b3c-4d5e-4f60-8a7b-9c0d1e2f3a4b').intentId).toBe('invoice.draft')
   })
 })

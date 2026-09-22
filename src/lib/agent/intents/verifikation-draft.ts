@@ -28,6 +28,8 @@ interface CapturedVerifikationDraft {
     entry_date: string | null
     description: string | null
     status: string | null
+    /** Fork 2026-09-22: the verifikat's free-text note (anteckning). */
+    notes?: string | null
   } | null
   current_lines: {
     account_number: string | null
@@ -113,7 +115,7 @@ export const verifikationDraft = defineAgentIntent<
     if (journal_entry_id) {
       const { data: e } = await supabase
         .from('journal_entries')
-        .select('id, entry_date, description, status')
+        .select('id, entry_date, description, status, notes')
         .eq('id', journal_entry_id)
         .eq('company_id', companyId)
         .maybeSingle()
@@ -123,6 +125,7 @@ export const verifikationDraft = defineAgentIntent<
           entry_date: ((e as { entry_date?: string | null }).entry_date) ?? null,
           description: ((e as { description?: string | null }).description) ?? null,
           status: ((e as { status?: string | null }).status) ?? null,
+          notes: ((e as { notes?: string | null }).notes) ?? null,
         }
         // The per-line free text lives in `line_description`; there is no
         // `description` column on journal_entry_lines. Asking for one made
@@ -224,6 +227,7 @@ export const verifikationDraft = defineAgentIntent<
         `Verifikation: ${captured.entry.id} (${captured.entry.entry_date ?? '?'}, status ${captured.entry.status ?? '?'})`,
       )
       if (captured.entry.description) lines.push(`Beskrivning: ${captured.entry.description}`)
+      if (captured.entry.notes?.trim()) lines.push(`Anteckning på verifikationen: ${captured.entry.notes.trim().slice(0, 500)}`)
     } else if (captured.description_hint) {
       lines.push(`Användarens beskrivning än så länge: "${captured.description_hint}"`)
     } else {

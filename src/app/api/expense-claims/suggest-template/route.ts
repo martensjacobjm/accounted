@@ -6,6 +6,7 @@ import { validateBody } from '@/lib/api/validate'
 import { getAiService, getAiStatus } from '@/lib/ai'
 import { requireCapability } from '@/lib/entitlements/has-capability'
 import { CAPABILITY } from '@/lib/entitlements/keys'
+import { loadCompanyRules, renderCompanyRulesBlock } from '@/lib/agent/company-rules'
 
 ensureInitialized()
 
@@ -49,13 +50,16 @@ export const POST = withRouteContext(
       const catalog = candidates
         .map((c) => `${c.id} | ${c.name}${c.hint ? ` | ${c.hint}` : ''}`)
         .join('\n')
+      // Fork 2026-09-22: the company's rules (what the user taught the assistant)
+      // decide between templates the description alone cannot separate.
+      const rules = renderCompanyRulesBlock(await loadCompanyRules(supabase, companyId))
       const result = await getAiService().generateStructured({
         tier: 'extraction',
         system:
           'You classify Swedish business expenses onto booking templates. ' +
           'Pick the best matching template ids for the expense, most likely first. ' +
           'Only return ids from the provided catalog. Return at most 3; return none if nothing fits.',
-        prompt: `Expense description: ${description}\nAmount (SEK-equivalent): ${amount ?? 'unknown'}\n\nTemplate catalog (id | name | hint):\n${catalog}`,
+        prompt: `Expense description: ${description}\nAmount (SEK-equivalent): ${amount ?? 'unknown'}\n\n${rules.length > 0 ? `${rules.join('\n')}\n\n` : ''}Template catalog (id | name | hint):\n${catalog}`,
         maxTokens: 300,
         schema: {
           name: 'template_suggestions',

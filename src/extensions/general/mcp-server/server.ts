@@ -14831,7 +14831,14 @@ export const tools: McpTool[] = [
       const resolvedDefaultDimensions = resolvedDimBags[0]
 
       // Translate extracted line items into the supplier_invoice_items shape.
-      // Priority: line_overrides → per-line accountSuggestion → supplier.default_expense_account → 4000.
+      // Priority: line_overrides → per-line accountSuggestion → supplier.default_expense_account
+      // → the reading's document-level suggestedAccount. Fork 2026-09-22: the last
+      // resort used to be a silent '4000' (varuinköp) for any cost; now a line
+      // with no account at all is refused so the agent asks or passes line_overrides.
+      const readingAccount =
+        typeof extracted.suggestedAccount === 'string' && /^\d{4}$/.test(extracted.suggestedAccount)
+          ? extracted.suggestedAccount
+          : null
       const extractedLineItems = lineItemsExt.map((li, idx) => {
         const lineNumber = idx + 1
         const dimensions = resolvedDimBags[idx + 1]
@@ -14850,7 +14857,13 @@ export const tools: McpTool[] = [
         const vatAmount = rawVatAmount == null
           ? roundOre(lineTotal * vatRate)
           : Number(rawVatAmount) || 0
-        const accountNumber = lineOverrideMap.get(lineNumber) ?? (li.accountSuggestion as string | null) ?? supplierDefaultExpenseAccount ?? '4000'
+        const accountNumber = lineOverrideMap.get(lineNumber) ?? (li.accountSuggestion as string | null) ?? supplierDefaultExpenseAccount ?? readingAccount
+        if (!accountNumber) {
+          throw new Error(
+            `line ${lineNumber}: inget kostnadskonto. Leverantören har inget standardkonto och tolkningen föreslog inget; ange kontot med line_overrides [{ line_number: ${lineNumber}, account_number: "xxxx" }] (fråga användaren om det är oklart). / `
+            + `line ${lineNumber}: no cost account. The supplier has no default account and the reading suggested none; pass line_overrides [{ line_number: ${lineNumber}, account_number: "xxxx" }] (ask the user when unsure).`,
+          )
+        }
         // Särskild löneskatt: same guard the create routes and the executor
         // enforce (SI_CREATE_SLP_INVALID_ACCOUNT). Reject at staging time on
         // the RESOLVED account so the agent learns immediately, instead of a

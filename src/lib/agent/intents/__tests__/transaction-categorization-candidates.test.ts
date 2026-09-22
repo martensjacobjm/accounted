@@ -71,6 +71,8 @@ async function captureWith(opts: {
     { data: TX_ROW },
     { data: [] },
     { data: matched },
+    // Fork 2026-09-22: the review dialog's stored proposal (none here).
+    { data: null },
     // #1425's backfill-by-document_id issues a query only when an underlag was
     // found and lacks chat_answers; the candidate scan runs only when nothing
     // was found at all, so exactly one of the two consumes this slot.
@@ -184,5 +186,26 @@ describe('ask-once: WhatsApp answers reach the in-app assistant', () => {
     const captured = await captureWith({ matchedItems: [], unmatchedItems: [] })
     expect(captured.underlag).toHaveLength(0)
     expect(render(captured)).toContain('UNDERLAG: saknas')
+  })
+})
+
+describe('fork 2026-09-22: the row conversation sees the note and the dialog proposal', () => {
+  it('renders the row note, the reference and what the review dialog proposed', async () => {
+    const { supabase, enqueueMany } = createQueuedMockSupabase()
+    enqueueMany([
+      { data: { ...(TX_ROW as Record<string, unknown>), notes: 'Moppar till kund', reference: 'OCR 991', original_description: 'JULA AB MORA' } },
+      { data: [] },
+      { data: [] },
+      { data: { account: '5410', reasoning: 'Jula säljer verktyg.', confidence: 0.62 } },
+      { data: [] },
+    ])
+    const captured = await transactionCategorization.capture(
+      { transaction_id: TX_ID },
+      { supabase: supabase as unknown as SupabaseClient, userId: 'user-1', companyId: COMPANY_ID },
+    )
+    const out = render(captured)
+    expect(out).toContain('Användarens anteckning på raden: Moppar till kund')
+    expect(out).toContain('Referens: OCR 991')
+    expect(out).toContain('Granskningsdialogen föreslog konto 5410 (säkerhet 62 %): Jula säljer verktyg.')
   })
 })
