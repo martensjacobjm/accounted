@@ -45,6 +45,7 @@ import { listContextKey, writeListContext } from '@/lib/navigation/list-context'
 import { useCompanyOptional } from '@/contexts/CompanyContext'
 import type { FiscalPeriod, SupplierInvoice } from '@/types'
 import { useCompanySettings } from '@/components/settings/useSettings'
+import AskAssistantRowButton from '@/components/agent/AskAssistantRowButton'
 
 const NewSupplierInvoiceDialog = dynamic(
   () => import('@/components/supplier-invoices/NewSupplierInvoiceDialog'),
@@ -855,6 +856,15 @@ export default function SupplierInvoicesPage() {
                       >
                         {inv.supplier_invoice_number}
                       </Link>
+                      <span className="ml-1 inline-block align-middle" onClick={(e) => e.stopPropagation()}>
+                        <AskAssistantRowButton
+                          focus={{ kind: 'supplier_invoice', id: inv.id, label: `${inv.supplier?.name ?? ''} ${inv.supplier_invoice_number ?? ''}` }}
+                          intentId="supplier_invoice.review"
+                          intentArgs={{ supplier_invoice_id: inv.id }}
+                          label="Prata"
+                          variant="ghost"
+                        />
+                      </span>
                     </td>
                     <td className={cn(TD_CLASS, 'hidden whitespace-nowrap text-right tabular-nums text-muted-foreground sm:table-cell')}>
                       {formatDate(inv.due_date)}

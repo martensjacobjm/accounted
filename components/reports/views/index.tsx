@@ -80,6 +80,7 @@ import type {
 import type { MonthlyDataPoint } from '@/components/reports/IncomeExpenseChart'
 import type { DateRangeValue } from '@/components/common/ReportDateRange'
 import type { DimensionFilterValue } from '@/components/reports/DimensionFilter'
+import AskAssistantRowButton from '@/components/agent/AskAssistantRowButton'
 import type {
   TrialBalanceRow,
   IncomeStatementReport,
@@ -2035,7 +2036,14 @@ export function VatDeclarationView({ pageTitle }: { pageTitle?: string } = {}) {
               fiscalPeriodId={isYearly ? fiscalPeriodId : undefined}
               onCorrected={() => setRetryKey((k) => k + 1)}
             />
-              <div className="flex justify-end">
+              <div className="flex justify-between gap-2">
+                {/* Fork: the vat.review intent existed without any button. */}
+                <AskAssistantRowButton
+                  focus={{ kind: 'vat_period', id: `${periodType}:${year}:${period}`, label: `Moms ${periodType} ${year} period ${period}` }}
+                  intentId="vat.review"
+                  intentArgs={{ period_type: periodType, year, period }}
+                  label="Granska momsen med assistenten"
+                />
                 <Button variant="outline" size="sm" onClick={() => setChosenStep(2)}>
                   Nästa: Granska deklarationen →
                 </Button>
