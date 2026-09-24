@@ -690,6 +690,7 @@ export default function QuickReviewDialog({
               transactionId={tx.id}
               open={open}
               hasUnderlag={!!documentId}
+              documentId={readDocId}
               initial={assistantRead && readIsFresh(assistantRead, tx) ? assistantRead : null}
               initialNote={tx.notes ?? null}
               currentAccount={currentAccount}

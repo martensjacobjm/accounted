@@ -286,4 +286,24 @@ describe('duplicate delivery keeps the sender kind hint (#2569)', () => {
     })
     consoleError.mockRestore()
   })
+
+  it("adopts the web uploader's pinned kind the same way (fork)", async () => {
+    const { supabase, findCall } = mockSupabaseFor(makeAdoptedRow())
+
+    await processArchivedDocument(
+      supabase as never,
+      'user-1',
+      'company-1',
+      { id: 'doc-1', mime_type: 'application/pdf', deduplicated: true },
+      FILE,
+      'upload',
+      undefined,
+      undefined,
+      { userHints: { kindHint: 'supplier_invoice' } },
+    )
+
+    expect(findCall('invoice_inbox_items', 'update')?.[0]).toEqual({ kind_hint: 'supplier_invoice' })
+    expect(historyPayload()).toMatchObject({ kind_hint_incoming: 'supplier_invoice', kind_hint_after: 'supplier_invoice' })
+  })
 })
+

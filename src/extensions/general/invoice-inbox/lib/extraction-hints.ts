@@ -16,6 +16,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { loadCompanyRules } from '@/lib/agent/company-rules'
 import { renderChannelContextForModel } from '@/lib/documents/channel-context-notes'
 import type { InboxChannelContext } from '@/types'
+import { ACCOUNT_NUMBER_RE } from '@/lib/invariants'
 
 export type UploadKindHint = 'receipt' | 'supplier_invoice'
 
@@ -138,7 +139,7 @@ export async function loadAccountChart(supabase: SupabaseClient, companyId: stri
     if (error) return []
     return ((data ?? []) as Array<{ account_number: string | number | null }>)
       .map((r) => (r.account_number == null ? '' : String(r.account_number)))
-      .filter((n) => /^\d{4}$/.test(n))
+      .filter((n) => ACCOUNT_NUMBER_RE.test(n))
   } catch {
     return []
   }

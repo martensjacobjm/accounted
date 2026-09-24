@@ -354,7 +354,8 @@ async function processArchivedDocumentInner(
       const hintBefore = adopted.kind_hint ?? null
       let hintAfter = hintBefore
       let hintSkipped: 'consumed' | 'write_failed' | null = null
-      const incomingHint = emailMeta?.kindHint ?? null
+      // Fork: the web uploader's pinned kind is the same explicit intent as the +lev/+ver tag.
+      const incomingHint = emailMeta?.kindHint ?? opts.userHints?.kindHint ?? null
       const stillOpen =
         adopted.created_supplier_invoice_id == null &&
         adopted.created_journal_entry_id == null &&

@@ -18,6 +18,7 @@
  */
 import { resolveSekAmountOrNull } from '@/lib/bookkeeping/currency-utils'
 import { roundOre } from '@/lib/money'
+import { ACCOUNT_NUMBER_RE } from '@/lib/invariants'
 
 export interface FallbackKonteringTx {
   amount: number
@@ -50,7 +51,7 @@ export function buildFallbackKonteringLines(
   if (total <= 0) return []
 
   const costLine: FallbackKonteringLine = {
-    account_number: typeof costAccount === 'string' && /^\d{4}$/.test(costAccount) ? costAccount : '',
+    account_number: typeof costAccount === 'string' && ACCOUNT_NUMBER_RE.test(costAccount) ? costAccount : '',
     debit_amount: 0,
     credit_amount: 0,
     description: '',

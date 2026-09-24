@@ -14836,7 +14836,7 @@ export const tools: McpTool[] = [
       // resort used to be a silent '4000' (varuinköp) for any cost; now a line
       // with no account at all is refused so the agent asks or passes line_overrides.
       const readingAccount =
-        typeof extracted.suggestedAccount === 'string' && /^\d{4}$/.test(extracted.suggestedAccount)
+        typeof extracted.suggestedAccount === 'string' && ACCOUNT_NUMBER_RE.test(extracted.suggestedAccount)
           ? extracted.suggestedAccount
           : null
       const extractedLineItems = lineItemsExt.map((li, idx) => {

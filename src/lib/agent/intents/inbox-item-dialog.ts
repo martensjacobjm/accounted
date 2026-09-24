@@ -3,6 +3,7 @@ import { SONNET_MODEL, EFFORT_STANDARD } from '@/lib/agent/composer/client'
 import { accountFromNote, liabilityFromNote } from '@/lib/expenses/suggest-expense-account'
 import type { InboxChannelContext, InvoiceExtractionResult } from '@/types'
 import { renderChannelContextForModel } from '@/lib/documents/channel-context-notes'
+import { ACCOUNT_NUMBER_RE } from '@/lib/invariants'
 
 // inbox.item-dialog: "Prata med assistenten om underlaget" on ONE item in the
 // Underlag pane (bok.dalavs.se fork, Jacob 2026-09-22: "man ska kunna prata med
@@ -126,7 +127,7 @@ export const inboxItemDialog = defineAgentIntent<InboxItemDialogArgs, CapturedIn
     const chart = new Set(
       ((chartRows ?? []) as Array<{ account_number: string | number | null }>)
         .map((r) => (r.account_number == null ? '' : String(r.account_number)))
-        .filter((n) => /^\d{4}$/.test(n)),
+        .filter((n) => ACCOUNT_NUMBER_RE.test(n)),
     )
 
     const status: NonNullable<CapturedInboxItem['item']>['status'] =

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createQueuedMockSupabase } from '@/tests/helpers'
-import { routeClassifiedDocument } from '../route-from-arkiv'
+import { routeClassifiedDocument, routeStaleQueueItems } from '../route-from-arkiv'
 
 const mock = createQueuedMockSupabase()
 const { enqueue, reset, findCall, findCalls } = mock
@@ -77,5 +77,27 @@ describe('routeClassifiedDocument', () => {
     expect(await classified('other')).toBe('left')
     enqueue({ data: null })
     expect(await classified('receipt')).toBe('not_found')
+  })
+
+  it('keeps an item whose kind a person or sender pinned in the queue when Arkiv calls the document something else (fork)', async () => {
+    enqueue({ data: doc })
+    enqueue({ data: [item({ kind_hint: 'receipt' }), item({ id: 'item-2' })] })
+    enqueue({})
+    expect(await classified('agreement.loan')).toBe('routed_to_arkiv')
+    expect(findCall('invoice_inbox_items', 'in')).toEqual(['id', ['item-2']])
+
+    reset()
+    enqueue({ data: doc })
+    enqueue({ data: [item({ kind_hint: 'supplier_invoice' })] })
+    expect(await classified('agreement.loan')).toBe('left')
+    expect(findCalls('invoice_inbox_items', 'update')).toEqual([])
+  })
+})
+
+describe('routeStaleQueueItems', () => {
+  it('never sweeps an item with a pinned kind out of the queue (fork)', async () => {
+    enqueue({ data: [] })
+    await routeStaleQueueItems(supabase)
+    expect(findCalls('invoice_inbox_items', 'is')).toContainEqual(['kind_hint', null])
   })
 })

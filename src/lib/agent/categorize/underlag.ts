@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { roundOre } from '@/lib/money'
 import { renderChannelContextForModel } from '@/lib/documents/channel-context-notes'
 import type { InboxChannelContext } from '@/types'
+import { ACCOUNT_NUMBER_RE } from '@/lib/invariants'
 
 /**
  * Gather the underlag (receipt / invoice text) matched to a transaction and
@@ -128,6 +129,6 @@ function renderExtraction(ex: Record<string, unknown>, label: string): string {
   const extra: string[] = []
   if (typeof ex.documentKind === 'string' && ex.documentKind) extra.push(`Dokumenttyp: ${ex.documentKind}`)
   if (typeof ex.merchantCategory === 'string' && ex.merchantCategory) extra.push(`Kategori enligt tolkningen: ${ex.merchantCategory}`)
-  if (typeof ex.suggestedAccount === 'string' && /^\d{4}$/.test(ex.suggestedAccount)) extra.push(`Tolkningens kontoförslag: ${ex.suggestedAccount}`)
+  if (typeof ex.suggestedAccount === 'string' && ACCOUNT_NUMBER_RE.test(ex.suggestedAccount)) extra.push(`Tolkningens kontoförslag: ${ex.suggestedAccount}`)
   return extra.length ? `${body}\n${extra.join('. ')}.` : body
 }

@@ -22,6 +22,7 @@ interface DocumentRow {
 interface ItemRow {
   id: string
   routed_to_arkiv_at: string | null
+  kind_hint?: string | null
   created_supplier_invoice_id: string | null
   created_journal_entry_id: string | null
   matched_transaction_id: string | null
@@ -44,7 +45,7 @@ export async function routeClassifiedDocument(
   const d = doc as DocumentRow
   const { data: rows, error: itemsError } = await supabase
     .from('invoice_inbox_items')
-    .select('id, routed_to_arkiv_at, created_supplier_invoice_id, created_journal_entry_id, matched_transaction_id')
+    .select('id, routed_to_arkiv_at, kind_hint, created_supplier_invoice_id, created_journal_entry_id, matched_transaction_id')
     .eq('company_id', input.companyId)
     .eq('document_id', input.documentId)
   if (itemsError) throw new Error(`inbox items fetch failed: ${itemsError.message}`)
@@ -74,7 +75,11 @@ export async function routeClassifiedDocument(
     return 'queued'
   }
 
-  const waiting = items.filter((i) => !consumed(i) && !i.routed_to_arkiv_at)
+  // Fork bok.dalavs.se: a pinned kind (the person's pick in the pane, the
+  // uploader's Kvitto/Faktura, the sender's +lev/+ver) is a human saying "this
+  // is booked from Underlag"; the classifier's guess never overrides it. The
+  // person clears the pin ("Enligt tolkningen") to let Arkiv take it.
+  const waiting = items.filter((i) => !consumed(i) && !i.routed_to_arkiv_at && !i.kind_hint)
   if (waiting.length === 0) return 'left'
   const { error } = await supabase
     .from('invoice_inbox_items')
@@ -97,6 +102,7 @@ export async function routeStaleQueueItems(supabase: SupabaseClient): Promise<nu
     .from('invoice_inbox_items')
     .select('id, document_id, document_attachments!inner(doc_type, admission_state)')
     .is('routed_to_arkiv_at', null)
+    .is('kind_hint', null) // fork: a pinned kind stays in Underlag, see routeClassifiedDocument
     .is('created_supplier_invoice_id', null)
     .is('created_journal_entry_id', null)
     .is('matched_transaction_id', null)

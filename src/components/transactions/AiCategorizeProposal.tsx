@@ -47,6 +47,8 @@ interface Props {
   open: boolean
   /** Whether a receipt or invoice is matched: it changes what the loading line says. */
   hasUnderlag?: boolean
+  /** Fork: an underlag attached in the dialog and read; "fråga igen" sends it with the note. */
+  documentId?: string | null
   /** The business account the dialog currently books to, for the agree check. */
   currentAccount?: string | null
   /** Take the pick as soon as it lands; off when the dialog already has a template of its own. */
@@ -100,6 +102,7 @@ export default function AiCategorizeProposal({
   transactionId,
   open,
   hasUnderlag = false,
+  documentId = null,
   currentAccount,
   autoApply = true,
   onTake,
@@ -173,7 +176,11 @@ export default function AiCategorizeProposal({
       const res = await fetch('/api/agent/categorize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transaction_id: transactionId, user_note: text }),
+        body: JSON.stringify({
+          transaction_id: transactionId,
+          user_note: text,
+          ...(documentId ? { document_id: documentId } : {}),
+        }),
       })
       const body = res.ok ? ((await res.json()) as { data?: AssistantRead }) : null
       if (!body?.data) {
@@ -212,11 +219,11 @@ export default function AiCategorizeProposal({
       <button
         type="submit"
         disabled={asking || note.trim().length === 0}
-        className={cn(QUIET_LINK_CLASS, 'text-[12px] font-medium disabled:opacity-50')}
+        className={cn(QUIET_LINK_CLASS, 'text-[12.5px] font-medium disabled:opacity-50')}
       >
         {asking ? t('ai_note_asking') : t('ai_note_ask')}
       </button>
-      {askError ? <span className="text-[12px] text-destructive">{askError}</span> : null}
+      {askError ? <span className="text-[12.5px] text-destructive">{askError}</span> : null}
     </form>
   )
 
