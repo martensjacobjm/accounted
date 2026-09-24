@@ -1,8 +1,8 @@
 # Fork-bygge för bok.dalavs.se (martensjacobjm/accounted, beslut B-S21 2026-09-16).
 # Bygger self-hosted-imagen ur en jacob/*-gren på GitHubs runner (16 GB RAM) och
 # publicerar den under ghcr.io/martensjacobjm/gnubok, eftersom VANILJOK (WSL 8 GB)
-# inte klarar `next build` utan att frysa. Upstreams Dockerfile rörs inte: heap-flaggan
-# för typkontrollen (upstreams CI kör 8192, core-build.yml) läggs på en tillfällig kopia.
+# inte klarar `next build` utan att frysa. Upstreams docker/Dockerfile används som den är:
+# den sätter själv NODE_OPTIONS=--max-old-space-size=6144 före bygget (sedan #2961).
 name: fork-image
 
 on:
@@ -20,10 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Dockerfile-variant med Node-heap för typkontrollen
-        run: |
-          sed 's|^RUN npm run build$|ENV NODE_OPTIONS=--max-old-space-size=6144\nRUN npm run build|' Dockerfile > Dockerfile.fork
-          grep -n -B1 'RUN npm run build' Dockerfile.fork
+      - name: Dockerfilen har heap-flaggan
+        run: grep --line-number 'max-old-space-size' docker/Dockerfile
 
       - name: Taggar
         id: meta
@@ -44,7 +42,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.fork
+          file: docker/Dockerfile
           platforms: linux/amd64
           push: true
           build-args: EXTENSIONS_PRESET=self-hosted
