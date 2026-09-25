@@ -19,6 +19,19 @@ import { ACCOUNT_NUMBER_RE } from '@/lib/invariants'
 
 interface InboxItemDialogArgs {
   item_id: string
+  /** Fork 2026-09-25: the pane's "Vem betalade?" choice, so the assistant does not ask it again. */
+  payer?: PaneChoice
+}
+
+type PaneChoice = 'company' | 'owner' | 'employee' | 'unpaid'
+const PAYER_TEXT: Record<PaneChoice, string> = {
+  company: 'företagskontot',
+  owner: 'egna pengar (utlägg av ägaren)',
+  employee: 'en anställd (utlägg, skuld 2820)',
+  unpaid: 'obetald, ska betalas (2440)',
+}
+function paneChoice(v: unknown): PaneChoice | null {
+  return typeof v === 'string' && v in PAYER_TEXT ? (v as PaneChoice) : null
 }
 
 type MatchedTx = { id: string; date: string | null; amount: number | null; description: string | null } | null
@@ -46,6 +59,8 @@ interface CapturedInboxItem {
     matched_tx: MatchedTx
   } | null
   entity_type: string | null
+  /** Fork: what the person picked under "Vem betalade?" in the pane, when opened from there. */
+  payer: PaneChoice | null
 }
 
 export const inboxItemDialog = defineAgentIntent<InboxItemDialogArgs, CapturedInboxItem>({
@@ -79,10 +94,11 @@ export const inboxItemDialog = defineAgentIntent<InboxItemDialogArgs, CapturedIn
   model: SONNET_MODEL,
   thinking: { effort: EFFORT_STANDARD },
 
-  capture: async ({ item_id }, { supabase, companyId }) => {
+  capture: async ({ item_id, payer: rawPayer }, { supabase, companyId }) => {
+    const payer = paneChoice(rawPayer)
     const { data: company } = await supabase.from('companies').select('entity_type').eq('id', companyId).maybeSingle()
     const entityType = (company as { entity_type?: string | null } | null)?.entity_type ?? null
-    if (typeof item_id !== 'string' || !item_id) return { item: null, entity_type: entityType }
+    if (typeof item_id !== 'string' || !item_id) return { item: null, entity_type: entityType, payer }
 
     const { data: row } = await supabase
       .from('invoice_inbox_items')
@@ -92,7 +108,7 @@ export const inboxItemDialog = defineAgentIntent<InboxItemDialogArgs, CapturedIn
       .eq('company_id', companyId)
       .eq('id', item_id)
       .maybeSingle()
-    if (!row) return { item: null, entity_type: entityType }
+    if (!row) return { item: null, entity_type: entityType, payer }
 
     const ex = (row.extracted_data ?? null) as InvoiceExtractionResult | null
     const ctx = (row.channel_context ?? null) as InboxChannelContext | null
@@ -139,6 +155,7 @@ export const inboxItemDialog = defineAgentIntent<InboxItemDialogArgs, CapturedIn
 
     return {
       entity_type: entityType,
+      payer,
       item: {
         item_id: row.id as string,
         status,
@@ -206,6 +223,9 @@ export const inboxItemDialog = defineAgentIntent<InboxItemDialogArgs, CapturedIn
       )
     else lines.push('  STATUS: ingen banktransaktion är matchad. Då är det antingen betalt med egna pengar (motkonto 2018 egna insättningar i enskild firma och handels-/kommanditbolag, 2893 skuld till ägaren i aktiebolag, om inte företagets regler säger annat) eller en obetald faktura (2440).')
     lines.push(`  bolagsform enligt registret=${captured.entity_type ?? 'okänd'}`)
+    if (captured.payer && it.status !== 'already_booked') {
+      lines.push(`  VEM BETALADE (valt av användaren i rutan): ${PAYER_TEXT[captured.payer]}. Fråga inte hur det betalades; utgå från det valet i förslaget.`)
+    }
     lines.push('')
     lines.push('Arbetssätt:')
     lines.push('- DU BÖRJAR samtalet. Säg i en mening vad du ser (motpart, belopp, vad som köpts) och ställ BARA de frågor du inte kan besvara ur underlaget och kommentaren: vad köptes/vad ska det användas till, och vem betalade (företagskontot, egna pengar, obetalt). Finns svaren redan i kommentaren eller reglerna: fråga inte, föreslå direkt.')

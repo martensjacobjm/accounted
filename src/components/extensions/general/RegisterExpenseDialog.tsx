@@ -102,6 +102,9 @@ export default function RegisterExpenseDialog({ open, onOpenChange, item, payer,
   // The chart is only consulted when the dialog opens; keeping it out of the
   // reset effect's deps means a refetched account list never wipes typed input.
   const accountsRef = useRef(accounts)
+  // Fork: the latest typed value, so a late engine suggestion never overwrites the person.
+  const expenseAccountRef = useRef(expenseAccount)
+  expenseAccountRef.current = expenseAccount
   accountsRef.current = accounts
   const [ownerName, setOwnerName] = useState('')
   const [employeeId, setEmployeeId] = useState('')
@@ -142,6 +145,28 @@ export default function RegisterExpenseDialog({ open, onOpenChange, item, payer,
     setLiabilityChoice(liabilityFromNote(uploaderNote) ?? '')
     setEmployeeId('')
     setEmployeeName('')
+    // Fork 2026-09-25: neither the comment nor the reading named an account, so
+    // ask the bank rows' engine (history, rules, the receipt). Fills only an
+    // empty field; the person's own entry always wins.
+    if (suggestion.account) return
+    let cancelled = false
+    fetch(`/api/extensions/ext/invoice-inbox/items/${item.id}/suggest-account`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json: { data?: { account?: string | null } } | null) => {
+        const account = json?.data?.account ?? null
+        if (cancelled || !account || expenseAccountRef.current) return
+        if (chart && !chart.has(account)) return
+        setExpenseAccount(account)
+        setAccountSource('assistant')
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
   }, [open, item.id, data, isForeign, uploaderNote])
 
   const amount = parseAmount(amountInput)
@@ -318,7 +343,11 @@ export default function RegisterExpenseDialog({ open, onOpenChange, item, payer,
             />
             {accountSource && expenseAccount && (
               <p className="text-xs text-muted-foreground">
-                {accountSource === 'note' ? t('expense_account_from_note') : t('expense_account_from_ai')}
+                {accountSource === 'note'
+                  ? t('expense_account_from_note')
+                  : accountSource === 'assistant'
+                    ? t('expense_account_from_assistant')
+                    : t('expense_account_from_ai')}
               </p>
             )}
           </div>

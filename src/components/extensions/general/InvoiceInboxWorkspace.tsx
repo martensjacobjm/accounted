@@ -1933,10 +1933,10 @@ export default function InvoiceInboxWorkspace(_props: WorkspaceComponentProps) {
               }}
               onTalkAboutItem={
                 identity.isVerified && assistantAvailable
-                  ? (itemId) => {
+                  ? (itemId, payer) => {
                       openAgentSheet({
                         intentId: 'inbox.item-dialog',
-                        intentArgs: { item_id: itemId },
+                        intentArgs: payer ? { item_id: itemId, payer } : { item_id: itemId },
                         contextRef: `inbox_item:${itemId}`,
                       })
                     }
@@ -2888,7 +2888,8 @@ function FieldsRail({
   onUnmatchTransaction: () => Promise<void>
   onAskAssistant?: (transactionId: string) => void
   /** Fork: open the assistant on this one item, matched or not (inbox.item-dialog). */
-  onTalkAboutItem?: (itemId: string) => void
+  /** Fork: payer = the pane's "Vem betalade?" choice, so the assistant does not ask it again. */
+  onTalkAboutItem?: (itemId: string, payer?: PayerChoice) => void
   isDeleting: boolean
   onFieldsUpdated: (data: InvoiceExtractionResult) => void
   /** Re-read the item after this rail posted a verifikat for it. */
@@ -3435,7 +3436,7 @@ function FieldsRail({
               </Button>
             )}
             {showBookingBridge && onTalkAboutItem && (
-              <Button variant="secondary" size="sm" className="w-full" onClick={() => onTalkAboutItem(item.id)}>
+              <Button variant="secondary" size="sm" className="w-full" onClick={() => onTalkAboutItem(item.id, payer)}>
                 {t('talk_about_item')}
               </Button>
             )}
@@ -3477,7 +3478,7 @@ function FieldsRail({
                 as a verifikat, never forced into a supplier invoice), and the
                 verifikat editor stays reachable below as the escape hatch. */}
             {onTalkAboutItem && (
-              <Button variant="secondary" size="sm" className="w-full" onClick={() => onTalkAboutItem(item.id)}>
+              <Button variant="secondary" size="sm" className="w-full" onClick={() => onTalkAboutItem(item.id, payer)}>
                 {t('talk_about_item')}
               </Button>
             )}

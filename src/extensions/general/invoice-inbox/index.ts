@@ -116,6 +116,8 @@ import { checkInboxUploadRateLimit } from '@/lib/rate-limits/inbox'
 import { backfillSupplierPaymentDetails, type SupplierPaymentDetails } from '@/lib/supplier-invoices/payment-details-backfill'
 import { simpleParser } from 'mailparser'
 import type { InboxChannelContext, InvoiceExtractionResult, InvoiceInboxItem, SupplierInvoice, SupplierInvoiceItem } from '@/types'
+import { suggestAccountForUnderlag } from '@/lib/agent/categorize/suggest-for-underlag'
+import { getAiStatus } from '@/lib/ai'
 
 const MAX_ATTACHMENTS_PER_EMAIL = 20
 // Received-mail panel window (#2181): 30 days covers "the mail I sent last
@@ -214,6 +216,9 @@ const CompleteSignedUploadSchema = z.object({
 
 // Fork: the person can correct the AI's kvitto/faktura call after the fact.
 // null clears the override so extracted_data.documentKind shows again.
+// Fork: what the person typed in the utlägg dialog, added to the upload comment.
+const SuggestAccountSchema = z.object({ note: z.string().max(1000).nullable().optional() })
+
 const SetInboxKindSchema = z.object({
   kind_hint: z.enum(['receipt', 'supplier_invoice']).nullable(),
 })
@@ -939,6 +944,67 @@ export const invoiceInboxExtension: Extension = {
         if (!updated) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
         return NextResponse.json({ data: updated })
+      },
+    },
+
+    // ── Cost account for an underlag without a bank row (fork) ──────────
+    // The reading proposes no account by design, so the utlägg dialog opened
+    // with an empty cost account. Same engine and evidence as the bank rows
+    // (lib/agent/categorize/suggest-for-underlag.ts); read-only, nothing booked.
+    {
+      method: 'POST',
+      path: '/items/:id/suggest-account',
+      handler: async (request: Request, ctx?: ExtensionContext) => {
+        if (!ctx) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+        const url = new URL(request.url)
+        const id = url.searchParams.get('_id')
+        if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
+
+        let body: z.infer<typeof SuggestAccountSchema>
+        try {
+          body = SuggestAccountSchema.parse(await request.json().catch(() => ({})))
+        } catch (err) {
+          return NextResponse.json({ error: err instanceof Error ? err.message : 'Invalid request body' }, { status: 400 })
+        }
+
+        if (!(await hasCapability(ctx.supabase, ctx.companyId, CAPABILITY.ai))) {
+          return capabilityBlockedResponse(CAPABILITY.ai)
+        }
+        const none = { account: null, confidence: 0, reasoning: '' }
+        if (!getAiStatus().configured) return NextResponse.json({ data: none })
+
+        const [{ data: item, error: itemError }, { data: settings }] = await Promise.all([
+          ctx.supabase
+            .from('invoice_inbox_items')
+            .select('id, extracted_data, channel_context')
+            .eq('id', id)
+            .eq('company_id', ctx.companyId)
+            .maybeSingle(),
+          ctx.supabase.from('company_settings').select('vat_registered, entity_type').eq('company_id', ctx.companyId).maybeSingle(),
+        ])
+        if (itemError) return NextResponse.json({ error: itemError.message }, { status: 500 })
+        if (!item) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+        const channel = (item.channel_context ?? null) as InboxChannelContext | null
+        const userNote = [channel?.user_note?.trim(), body.note?.trim()].filter(Boolean).join('. ') || null
+        try {
+          const entityType: EntityType = await resolveCompanyEntityType(
+            ctx.supabase,
+            ctx.companyId,
+            (settings as { entity_type?: string | null } | null)?.entity_type,
+          )
+          const suggestion = await suggestAccountForUnderlag(ctx.supabase, ctx.companyId, {
+            extracted: (item.extracted_data ?? null) as Record<string, unknown> | null,
+            entityType,
+            vatRegistered: (settings as { vat_registered?: boolean | null } | null)?.vat_registered ?? false,
+            userNote,
+          })
+          return NextResponse.json({ data: suggestion })
+        } catch (err) {
+          ctx.log.warn('suggest-account failed', { id, reason: err instanceof Error ? err.message : String(err) })
+          return NextResponse.json({ data: none })
+        }
       },
     },
 

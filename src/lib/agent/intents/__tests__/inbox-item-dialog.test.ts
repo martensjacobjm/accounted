@@ -121,4 +121,33 @@ describe('inbox.item-dialog', () => {
     expect(captured.item).toBeNull()
     expect(inboxItemDialog.promptTemplate({ captured, profileSummary: null, activeMemory: [] })).toContain('välja underlaget igen')
   })
+
+  it("carries the pane's 'Vem betalade?' choice so the assistant does not ask it again (fork)", async () => {
+    const { supabase, enqueueMany } = createQueuedMockSupabase()
+    enqueueMany([
+      { data: { entity_type: 'enskild_firma' } },
+      {
+        data: {
+          id: ITEM_ID,
+          document_id: 'doc-1',
+          kind_hint: 'receipt',
+          matched_transaction_id: null,
+          created_journal_entry_id: null,
+          created_supplier_invoice_id: null,
+          extracted_data: { supplier: { name: 'Lidl' }, totals: { total: 379.2, vatAmount: 75.84 } },
+          channel_context: null,
+        },
+      },
+      { data: [{ account_number: '5460' }] },
+    ])
+    const captured = await inboxItemDialog.capture({ item_id: ITEM_ID, payer: 'owner' }, ctx(supabase))
+    expect(captured.payer).toBe('owner')
+    const prompt = inboxItemDialog.promptTemplate({ captured, profileSummary: null, activeMemory: [] })
+    expect(prompt).toContain('VEM BETALADE (valt av användaren i rutan): egna pengar')
+    expect(prompt).toContain('Fråga inte hur det betalades')
+
+    const unknown = await inboxItemDialog.capture({ item_id: '', payer: 'nonsense' as never }, ctx(createQueuedMockSupabase().supabase))
+    expect(unknown.payer).toBeNull()
+  })
 })
+

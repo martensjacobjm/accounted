@@ -13,7 +13,7 @@
  * suggestion, because the person who bought the thing knows what it was.
  */
 
-export type ExpenseAccountSource = 'note' | 'extraction'
+export type ExpenseAccountSource = 'note' | 'extraction' | 'assistant'
 
 export interface ExpenseAccountSuggestion {
   account: string | null

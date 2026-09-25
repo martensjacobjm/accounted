@@ -108,7 +108,8 @@ export async function gatherUnderlag(
   return lines.filter(Boolean).join('\n').slice(0, MAX_UNDERLAG_CHARS).trim()
 }
 
-function renderExtraction(ex: Record<string, unknown>, label: string): string {
+/** Fork: exported so an underlag with no bank row (an utlägg) is read the same way. */
+export function renderExtraction(ex: Record<string, unknown>, label: string): string {
   const supplier = (ex.supplier as { name?: string | null } | undefined) ?? null
   const invoice = (ex.invoice as { invoiceDate?: string | null; currency?: string | null } | undefined) ?? null
   const totals = (ex.totals as { total?: number | null; vatAmount?: number | null } | undefined) ?? null

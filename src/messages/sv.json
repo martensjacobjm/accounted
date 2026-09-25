@@ -3854,6 +3854,7 @@
     "talk_about_item": "Prata med assistenten om underlaget",
     "expense_account_from_note": "Förslag från din kommentar vid uppladdningen. Ändra om det är fel.",
     "expense_account_from_ai": "Förslag från tolkningen. Ändra om det är fel.",
+    "expense_account_from_assistant": "Förslag från assistenten utifrån kvittot, tidigare bokföringar och bolagets regler. Ändra om det är fel.",
     "expense_liability_label": "Motkonto (vem bolaget är skyldigt)",
     "expense_liability_2893": "Skuld till ägaren, betalas ut senare",
     "expense_liability_2018": "Egen insättning, kapital utan skuld",

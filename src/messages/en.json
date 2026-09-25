@@ -3854,6 +3854,7 @@
     "talk_about_item": "Talk to the assistant about this document",
     "expense_account_from_note": "Suggested from your upload comment. Change it if wrong.",
     "expense_account_from_ai": "Suggested by the extraction. Change it if wrong.",
+    "expense_account_from_assistant": "Suggested by the assistant from the receipt, earlier bookings and the company rules. Change it if wrong.",
     "expense_liability_label": "Counter account (whom the company owes)",
     "expense_liability_2893": "Owed to the owner, paid out later",
     "expense_liability_2018": "Owner contribution, equity without debt",
