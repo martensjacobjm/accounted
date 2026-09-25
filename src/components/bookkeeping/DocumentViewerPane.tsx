@@ -5,6 +5,7 @@ import { useTranslations } from 'next-intl'
 import { ExternalLink, FileText } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
+import { ZoomableImage } from '@/components/common/ZoomableImage'
 
 /**
  * Side-by-side document viewer used while booking manually, so the user can
@@ -166,12 +167,7 @@ export default function DocumentViewerPane({
             </div>
           </object>
         ) : showAsImage ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={inlineSrc}
-            alt={fileName ?? t('header_label')}
-            className="mx-auto max-w-full object-contain"
-          />
+          <ZoomableImage src={inlineSrc} alt={fileName ?? t('header_label')} className="h-full w-full" />
         ) : (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center text-sm text-muted-foreground">
             <FileText className="h-6 w-6" />

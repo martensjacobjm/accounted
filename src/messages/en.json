@@ -11548,5 +11548,11 @@
     "shopify": "Shopify",
     "woocommerce": "WooCommerce",
     "shop_help": "Orders are fetched from the web shop and booked."
+  },
+  "image_zoom": {
+    "zoom_in": "Zoom in",
+    "zoom_out": "Zoom out",
+    "fit": "Fit to pane",
+    "open_new_tab": "Open in new tab"
   }
 }

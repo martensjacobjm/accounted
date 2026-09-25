@@ -11548,5 +11548,11 @@
     "shopify": "Shopify",
     "woocommerce": "WooCommerce",
     "shop_help": "Ordrar hämtas från webshoppen och bokförs."
+  },
+  "image_zoom": {
+    "zoom_in": "Zooma in",
+    "zoom_out": "Zooma ut",
+    "fit": "Anpassa till rutan",
+    "open_new_tab": "Öppna i ny flik"
   }
 }

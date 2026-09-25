@@ -92,6 +92,7 @@ import {
 } from '@/lib/documents/upload-size'
 import { shrinkImageForUpload } from '@/lib/documents/shrink-image'
 import { uploadViaSignedUrl } from '@/lib/documents/direct-upload'
+import { ZoomableImage } from '@/components/common/ZoomableImage'
 
 /**
  * A failure whose message is already the sentence to show the user, resolved
@@ -2455,15 +2456,8 @@ export function DocumentPreview({
   return (
     <div className="h-full w-full p-4 flex items-start justify-center overflow-hidden">
       {docMime?.startsWith('image/') ? (
-        // Image: frame hugs the image, capped at the parent's visible box.
-        <div className="max-h-full max-w-3xl bg-background rounded-lg border overflow-hidden flex">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={docUrl}
-            alt="Underlag"
-            className="block max-h-[calc(100vh-9rem)] max-w-full w-auto h-auto object-contain"
-          />
-        </div>
+        // Image: fitted to the pane, click or +/- to read a photographed receipt (fork).
+        <ZoomableImage src={docUrl} alt="Underlag" className="h-full w-full max-w-3xl" />
       ) : docMime === 'text/html' ? (
         // HTML mail underlag: arbitrary sender-controlled markup. sandbox
         // with no tokens = opaque origin, no scripts, no forms, no popups.

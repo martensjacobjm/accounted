@@ -32,6 +32,7 @@ import DocumentUploadZone from '@/components/bookkeeping/DocumentUploadZone'
 import type { UploadedFile } from '@/components/bookkeeping/DocumentUploadZone'
 import InboxDocumentPicker from '@/components/bookkeeping/InboxDocumentPicker'
 import { useBranding } from '@/lib/branding/brand-context'
+import { ZoomableImage } from '@/components/common/ZoomableImage'
 
 interface DocumentRecord {
   id: string
@@ -431,11 +432,7 @@ export default function JournalEntryAttachments({
 
                 {expandedDoc === doc.id && doc.download_url && isImageType(doc.mime_type) && (
                   <div className="px-2 py-2">
-                    <img
-                      src={`/api/documents/${doc.id}/inline`}
-                      alt={doc.file_name}
-                      className="max-h-48 rounded-lg object-contain"
-                    />
+                    <ZoomableImage src={`/api/documents/${doc.id}/inline`} alt={doc.file_name} className="h-80 w-full" />
                   </div>
                 )}
 
