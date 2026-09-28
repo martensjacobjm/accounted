@@ -5,7 +5,7 @@ export interface NEDeclarationRutor {
   R3: number   // Bil/bostadsförmån (3200)
   R4: number   // Ränteintäkter (8310-8330)
   R5: number   // Varuinköp (4000-4990)
-  R6: number   // Övriga kostnader (5000-6990, 7970)
+  R6: number   // Övriga kostnader (5000-6999, 7900-7999)
   R7: number   // Lönekostnader (7000-7699)
   R8: number   // Räntekostnader (8400-8499)
   R9: number   // Avskrivningar fastighet (7820)

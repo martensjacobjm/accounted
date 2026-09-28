@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { NE_ACCOUNT_MAPPINGS } from '../ne-engine'
+import { NE_ACCOUNT_MAPPINGS, isResultAccount } from '../ne-engine'
 
 /**
  * Helper to check if an account falls into a specific ruta
@@ -102,6 +102,42 @@ describe('NE Account Mappings', () => {
 
     it('3990 is mapped (not dropped)', () => {
       expect(findRutaForAccount('3990')).not.toBeNull()
+    })
+  })
+
+  describe('R6 - Övriga externa kostnader covers all of class 5-6 and 79', () => {
+    // 6991-6999 are sub-accounts of 6990 and 79xx are övriga rörelsekostnader.
+    // A range of 5000-6990 + 7970 dropped 6991 (inkassoavgifter) and 7960
+    // (kursförluster) silently, so R11 came out 2 052 kr too high for 2024.
+    it.each(['5000', '5460', '6990', '6991', '6993', '6999', '7900', '7960', '7970', '7973', '7990', '7999'])(
+      '%s is in R6',
+      (account) => {
+        expect(findRutaForAccount(account)).toBe('R6')
+      },
+    )
+
+    it('neighbouring classes keep their own rutor', () => {
+      expect(findRutaForAccount('4990')).toBe('R5')
+      expect(findRutaForAccount('7000')).toBe('R7')
+      expect(findRutaForAccount('7699')).toBe('R7')
+      expect(findRutaForAccount('7700')).toBe('R10')
+      expect(findRutaForAccount('7820')).toBe('R9')
+      expect(findRutaForAccount('7899')).toBe('R10')
+      expect(findRutaForAccount('8410')).toBe('R8')
+    })
+  })
+
+  describe('isResultAccount', () => {
+    it('covers class 3-8 up to 8899', () => {
+      expect(isResultAccount('3000')).toBe(true)
+      expect(isResultAccount('7960')).toBe(true)
+      expect(isResultAccount('8899')).toBe(true)
+    })
+
+    it('leaves balance accounts and 89xx (skatt, årets resultat) out', () => {
+      expect(isResultAccount('2999')).toBe(false)
+      expect(isResultAccount('8910')).toBe(false)
+      expect(isResultAccount('8999')).toBe(false)
     })
   })
 

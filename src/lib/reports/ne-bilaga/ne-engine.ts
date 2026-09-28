@@ -19,7 +19,7 @@ import type {
  * R3:  Bil/bostadsförmån (3200)
  * R4:  Ränteintäkter (8310-8330)
  * R5:  Varuinköp (4000-4990)
- * R6:  Övriga kostnader (5000-6990, 7970) - inkl avdragsgilla gåvor (5460)
+ * R6:  Övriga kostnader (5000-6999, 7900-7999) - inkl avdragsgilla gåvor (5460)
  * R7:  Lönekostnader (7000-7699)
  * R8:  Räntekostnader (8400-8499)
  * R9:  Avskrivningar fastighet (7820)
@@ -83,9 +83,13 @@ export const NE_ACCOUNT_MAPPINGS: NEAccountMapping[] = [
   {
     ruta: 'R6',
     description: 'Övriga kostnader',
+    // Hela klass 5-6 (6991-6999 är underkonton till 6990) och hela klass 79
+    // (övriga rörelsekostnader: 7960 kursförluster på rörelseskulder, 797x
+    // förlust vid avyttring, 7990 övrigt). Intervallet 5000-6990 + 7970 tappade
+    // 6991 och 7960 utan varning, så R11 blev fel (bok.dalavs.se 2024, 2025).
     accountRanges: [
-      { start: '5000', end: '6990' },
-      { start: '7970', end: '7970' },
+      { start: '5000', end: '6999' },
+      { start: '7900', end: '7999' },
     ],
     isExpense: true,
   },
@@ -122,6 +126,14 @@ export const NE_ACCOUNT_MAPPINGS: NEAccountMapping[] = [
     isExpense: true,
   },
 ]
+
+/**
+ * Resultatkonton (klass 3-8) utom 89xx (årets resultat och skatt), som
+ * medvetet inte hör hemma i R1-R11.
+ */
+export function isResultAccount(accountNumber: string): boolean {
+  return accountNumber >= '3000' && accountNumber <= '8899'
+}
 
 /**
  * Check if an account number falls within a mapping's ranges
@@ -247,11 +259,13 @@ export async function generateNEDeclaration(
   const warnings: string[] = []
 
   // Process each account balance
+  const unmapped: string[] = []
   for (const [accountNumber, balance] of accountBalances) {
     // Skip zero balances
     if (Math.abs(balance) < 0.01) continue
 
     // Find which ruta this account belongs to
+    let matched = false
     for (const mapping of NE_ACCOUNT_MAPPINGS) {
       if (isAccountInMapping(accountNumber, mapping)) {
         // For revenue accounts (credit normal), negate the balance
@@ -269,8 +283,12 @@ export async function generateNEDeclaration(
           amount: roundToKrona(amount),
         })
 
+        matched = true
         break // Account matched, no need to check other mappings
       }
+    }
+    if (!matched && isResultAccount(accountNumber)) {
+      unmapped.push(`${accountNumber} (${roundToKrona(balance)} kr)`)
     }
   }
 
@@ -296,6 +314,13 @@ export async function generateNEDeclaration(
 
   if (rutor.R11 === 0 && totalRevenue === 0) {
     warnings.push('Inga bokförda intäkter eller kostnader hittades för perioden.')
+  }
+
+  if (unmapped.length > 0) {
+    warnings.push(
+      `Resultatkonton utan NE-ruta, ingår inte i R1-R11: ${unmapped.join(', ')}. ` +
+        'Kontrollera konteringen eller komplettera NE-bilagan för hand.',
+    )
   }
 
   return {

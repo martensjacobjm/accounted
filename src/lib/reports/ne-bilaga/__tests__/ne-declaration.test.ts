@@ -125,3 +125,33 @@ describe('generateNEDeclaration: closed fiscal year', () => {
     expect(result.warnings.some((w) => w.includes('Inga bokförda intäkter'))).toBe(false)
   })
 })
+
+describe('generateNEDeclaration: nothing on the income statement is dropped silently', () => {
+  it('puts 6991 and 7960 in R6 and warns about result accounts without a ruta', async () => {
+    // bok.dalavs.se 2024: 7960 kursförluster 2 052,08 fell out of R6, so the app
+    // showed R11 -68 069 while the books (and the filed NE) said -70 121.
+    vi.mocked(generateTrialBalance).mockResolvedValue({
+      rows: [
+        row('1930', 'Företagskonto', 0),
+        row('3231', 'Försäljning omvänd byggmoms', -375_454.1),
+        row('5120', 'El', 64_155.44),
+        row('6991', 'Inkassoavgifter', 3_420),
+        row('7960', 'Valutakursförluster', 2_052.08),
+        row('8020', 'Utdelning på andelar', -500),
+      ],
+      totalDebit: 0,
+      totalCredit: 0,
+      isBalanced: true,
+    })
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await generateNEDeclaration(makeSupabase() as any, COMPANY_ID, PERIOD_ID)
+
+    expect(result.rutor.R6).toBe(69_628)
+    expect(result.rutor.R11).toBe(375_454 - 69_628)
+    expect(result.breakdown.R6.accounts.map((a) => a.accountNumber)).toEqual(['5120', '6991', '7960'])
+    const unmappedWarning = result.warnings.find((w) => w.includes('utan NE-ruta'))
+    expect(unmappedWarning).toContain('8020 (-500 kr)')
+    expect(unmappedWarning).not.toContain('7960')
+  })
+})
