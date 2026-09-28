@@ -9,6 +9,7 @@ import {
   DeclarationRutaRow,
   formatWholeKronor,
 } from '@/components/reports/DeclarationRutaRow'
+import { NEBalanceSection } from '@/components/reports/NEBalanceSection'
 import type { NEDeclaration } from '@/lib/reports/ne-bilaga/types'
 import { parseApiError } from './api-error'
 
@@ -56,14 +57,17 @@ export function NEDeclarationView({ periodId }: { periodId: string }) {
   const error = upToDate ? (result.error ?? null) : null
   const loading = fetchKey !== null && !upToDate
 
-  const downloadSRU = async () => {
+  // 'sru' = blanketter.sru for the NE import in Inkomstdeklaration 1,
+  // 'sru-zip' = INFO.SRU + BLANKETTER.SRU for the e-tjänst Filöverföring.
+  const downloadSRU = async (format: 'sru' | 'sru-zip' = 'sru') => {
     setDownloading(true)
     setDownloadError(null)
     try {
-      const res = await fetch(`/api/reports/ne-bilaga?period_id=${periodId}&format=sru`)
+      const res = await fetch(`/api/reports/ne-bilaga?period_id=${periodId}&format=${format}`)
       if (!res.ok) throw new Error('Download failed')
       const blob = await res.blob()
-      const filename = res.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] || 'NE_SRU.zip'
+      const fallbackName = format === 'sru' ? 'blanketter.sru' : 'NE_SRU.zip'
+      const filename = res.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] || fallbackName
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
@@ -133,10 +137,23 @@ export function NEDeclarationView({ periodId }: { periodId: string }) {
                 {data.companyInfo.orgNumber && ` · Org.nr: ${data.companyInfo.orgNumber}`}
               </p>
             </div>
-            <Button variant="outline" onClick={downloadSRU} disabled={downloading}>
-              <Download className="h-4 w-4 mr-2" />
-              {downloading ? 'Laddar ner...' : 'Ladda ner SRU-fil'}
-            </Button>
+            <div className="flex flex-col items-end gap-1">
+              <Button variant="outline" onClick={() => downloadSRU('sru')} disabled={downloading}>
+                <Download className="h-4 w-4 mr-2" />
+                {downloading ? 'Laddar ner...' : 'Ladda ner blanketter.sru'}
+              </Button>
+              <p className="text-xs text-muted-foreground text-right">
+                Importeras i Skatteverkets Inkomstdeklaration 1 under Bilagor, Importera vid NE.{' '}
+                <button
+                  type="button"
+                  className="underline underline-offset-2 hover:text-foreground"
+                  onClick={() => downloadSRU('sru-zip')}
+                  disabled={downloading}
+                >
+                  Zip för e-tjänsten Filöverföring
+                </button>
+              </p>
+            </div>
           </div>
           {downloadError && (
             <div role="alert" className="flex items-start gap-2 text-sm text-destructive">
@@ -161,6 +178,9 @@ export function NEDeclarationView({ periodId }: { periodId: string }) {
           </div>
         </div>
       )}
+
+      {/* Balansräkning: NE sidan 1, B1-B16 */}
+      <NEBalanceSection data={data} />
 
       {/* Revenue section */}
       <section>

@@ -1,6 +1,6 @@
 import { getBranding } from '@/lib/branding/service'
 import { sruAmount as formatAmount, sruDate as formatDate, sruTime as formatTime } from '@/lib/reports/sru/format'
-import type { NEDeclaration, NEDeclarationRutor, SRUSubmission } from '@/lib/reports/ne-bilaga/types'
+import type { NEBalansposter, NEDeclaration, NEDeclarationRutor, SRUSubmission } from '@/lib/reports/ne-bilaga/types'
 
 /**
  * SRU File Generator for NE-bilaga (enskild näringsidkare)
@@ -16,12 +16,28 @@ import type { NEDeclaration, NEDeclarationRutor, SRUSubmission } from '@/lib/rep
  * Encoding: ISO 8859-1 (applied by the API route via encodeISO88591).
  * Line endings: CRLF. Amounts: integers in hela kronor (öre truncated per SFL 22:1).
  *
- * Field codes (Fältkod -> Rad NE) are taken from BAS-kontogruppen's official
- * coupling table "NE - Inkomst av näringsverksamhet, Enskilda näringsidkare"
- * (bas.se/kontoplaner/sru/). Confirmed against the BAS NE_EJ_K1 kopplingstabell:
+ * Field codes are Skatteverket's own fältnamnstabell for NE, file
+ * NE_SKV2161-13-02-25-02.xls in "Ändringar från och med 2025P4" (skatteverket.se,
+ * Teknisk information om filöverföring), cross-checked with BAS kopplingstabell
+ * NE_K1 (bas.se/kontoplaner/sru/):
+ *   B1 7200 · B2 7210 · B3 7211 · B4 7212 · B5 7213 · B6 7240 · B7 7250 ·
+ *   B8 7260 · B9 7280 · B10 7300 · B11 7320 · B12 7330 · B13 7380 · B14 7381 ·
+ *   B15 7382 · B16 7383
  *   R1 7400 · R2 7401 · R3 7402 · R4 7403 · R5 7500 · R6 7501 · R7 7502 ·
- *   R8 7503 · R9 7504 · R10 7505 · R11 7440. Period dates: 7011 (start) / 7012 (end).
+ *   R8 7503 · R9 7504 · R10 7505 · R11 7440 · R12 7600 (= R11, sidan 2).
+ * Period dates: 7011 (start) / 7012 (end). No #UPPGIFT is mandatory in the table;
+ * every amount is Numeriskt_A (signed integer). Teckenkonvention: R5-R10 carry a
+ * preprinted "-" and are reported as positive amounts, B-posts and R11/R12 have no
+ * preprinted sign and are reported with their own sign.
+ *
+ * Skatteverket's e-tjänst Inkomstdeklaration 1 imports the single file
+ * blanketter.sru (NE only); the INFO.SRU + BLANKETTER.SRU zip is for the separate
+ * e-tjänst Filöverföring. Uploading the zip to the NE import is rejected with
+ * "Filen ... innehåller fel" (bok.dalavs.se, 2026-09-10).
  */
+
+/** Filename Skatteverket's NE import instruction tells the user to pick. */
+export const BLANKETTER_FILENAME = 'blanketter.sru'
 
 const CRLF = '\r\n'
 const PROGRAM_VERSION = '1.0'
@@ -43,6 +59,29 @@ const NE_SRU_FIELD_CODES: Record<keyof NEDeclarationRutor, string> = {
   R9: '7504', // Avskrivningar och nedskrivningar byggnader och markanläggningar
   R10: '7505', // Avskrivningar och nedskrivningar maskiner/inventarier/immateriella tillgångar
   R11: '7440', // Bokfört resultat
+}
+
+/** R12 "Bokfört resultat (förs över från R11 sidan 1)": same amount as R11. */
+const R12_FIELD_CODE = '7600'
+
+/** Balansposter B1-B16 (NE sidan 1, räkenskapsschema). */
+const NE_SRU_BALANCE_CODES: Record<keyof NEBalansposter, string> = {
+  B1: '7200', // Immateriella anläggningstillgångar
+  B2: '7210', // Byggnader och markanläggningar
+  B3: '7211', // Mark och andra tillgångar som inte får skrivas av
+  B4: '7212', // Maskiner och inventarier
+  B5: '7213', // Övriga anläggningstillgångar
+  B6: '7240', // Varulager
+  B7: '7250', // Kundfordringar
+  B8: '7260', // Övriga fordringar
+  B9: '7280', // Kassa och bank
+  B10: '7300', // Eget kapital (tillgångar - skulder)
+  B11: '7320', // Obeskattade reserver
+  B12: '7330', // Avsättningar
+  B13: '7380', // Låneskulder
+  B14: '7381', // Skatteskulder
+  B15: '7382', // Leverantörsskulder
+  B16: '7383', // Övriga skulder
 }
 
 /**
@@ -142,7 +181,18 @@ function generateBlanketterSru(declaration: NEDeclaration, now: Date, identity12
   lines.push(`#UPPGIFT ${FISCAL_START_CODE} ${dateStringToSRU(declaration.fiscalYear.start)}`)
   lines.push(`#UPPGIFT ${FISCAL_END_CODE} ${dateStringToSRU(declaration.fiscalYear.end)}`)
 
-  // NE rutor R1-R11: emit non-zero values only (zero/empty fields must be omitted)
+  // Balansposter B1-B16, then R1-R11 and R12: emit non-zero values only (a
+  // post without a value must be omitted, per Skatteverket's filposter rule).
+  const balansOrder: (keyof NEBalansposter)[] = [
+    'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11', 'B12', 'B13', 'B14', 'B15', 'B16',
+  ]
+  for (const post of balansOrder) {
+    const value = declaration.balans?.[post] ?? 0
+    if (value !== 0) {
+      lines.push(`#UPPGIFT ${NE_SRU_BALANCE_CODES[post]} ${formatAmount(value)}`)
+    }
+  }
+
   const rutaOrder: (keyof NEDeclarationRutor)[] = [
     'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'R10', 'R11',
   ]
@@ -151,6 +201,9 @@ function generateBlanketterSru(declaration: NEDeclaration, now: Date, identity12
     if (value !== 0) {
       lines.push(`#UPPGIFT ${NE_SRU_FIELD_CODES[ruta]} ${formatAmount(value)}`)
     }
+  }
+  if (declaration.rutor.R11 !== 0) {
+    lines.push(`#UPPGIFT ${R12_FIELD_CODE} ${formatAmount(declaration.rutor.R11)}`)
   }
 
   lines.push('#BLANKETTSLUT')

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { NE_ACCOUNT_MAPPINGS, isResultAccount } from '../ne-engine'
+import { NE_ACCOUNT_MAPPINGS, NE_BALANCE_MAPPINGS, isBalanceAccount, isResultAccount } from '../ne-engine'
 
 /**
  * Helper to check if an account falls into a specific ruta
@@ -153,5 +153,73 @@ describe('NE Account Mappings', () => {
     it('3900 is in R2 not R1', () => {
       expect(findRutaForAccount('3900')).toBe('R2')
     })
+  })
+})
+
+/**
+ * Helper to check which balanspost an account falls into
+ */
+function findPostForAccount(accountNumber: string): string | null {
+  for (const mapping of NE_BALANCE_MAPPINGS) {
+    for (const range of mapping.accountRanges) {
+      if (accountNumber >= range.start && accountNumber <= range.end) {
+        return mapping.post
+      }
+    }
+  }
+  return null
+}
+
+describe('NE Balance Mappings (BAS kopplingstabell NE, förenklat årsbokslut)', () => {
+  it.each([
+    ['1000', 'B1'], ['1099', 'B1'],
+    ['1110', 'B2'], ['1150', 'B2'], ['1119', 'B2'],
+    ['1130', 'B3'], ['1180', 'B3'],
+    ['1220', 'B4'], ['1229', 'B4'], ['1230', 'B4'], ['1240', 'B4'],
+    ['1300', 'B5'], ['1310', 'B5'],
+    ['1400', 'B6'], ['1460', 'B6'],
+    ['1500', 'B7'], ['1510', 'B7'], ['1519', 'B7'],
+    ['1600', 'B8'], ['1650', 'B8'], ['1700', 'B8'], ['1790', 'B8'],
+    ['1910', 'B9'], ['1930', 'B9'], ['1970', 'B9'],
+    ['2110', 'B11'], ['2150', 'B11'],
+    ['2210', 'B12'],
+    ['2330', 'B13'], ['2350', 'B13'], ['2390', 'B13'],
+    ['2510', 'B14'], ['2610', 'B14'], ['2650', 'B14'], ['2710', 'B14'], ['2730', 'B14'],
+    ['2440', 'B15'], ['2449', 'B15'],
+    ['2410', 'B16'], ['2450', 'B16'], ['2490', 'B16'], ['2890', 'B16'], ['2990', 'B16'],
+  ])('maps %s to %s', (account, post) => {
+    expect(findPostForAccount(account)).toBe(post)
+  })
+
+  it('leaves eget kapital 20xx unmapped: B10 is derived, never read from the books', () => {
+    expect(findPostForAccount('2010')).toBeNull()
+    expect(findPostForAccount('2019')).toBeNull()
+    expect(findPostForAccount('2099')).toBeNull()
+  })
+
+  it('covers every account in class 1-2 except 18xx and 20xx', () => {
+    for (let n = 1000; n <= 2999; n++) {
+      const account = String(n)
+      const outside = (n >= 1800 && n <= 1899) || (n >= 2000 && n <= 2099)
+      expect(findPostForAccount(account) === null, account).toBe(outside)
+    }
+  })
+
+  it('assets (B1-B9) are debit-normal, liabilities (B11-B16) credit-normal', () => {
+    for (const m of NE_BALANCE_MAPPINGS) {
+      const isAsset = m.accountRanges[0].start < '2000'
+      expect(m.isDebitNormal, m.post).toBe(isAsset)
+    }
+  })
+})
+
+describe('isBalanceAccount', () => {
+  it('covers class 1 and 2 except 20xx', () => {
+    expect(isBalanceAccount('1000')).toBe(true)
+    expect(isBalanceAccount('1930')).toBe(true)
+    expect(isBalanceAccount('2999')).toBe(true)
+    expect(isBalanceAccount('2010')).toBe(false)
+    expect(isBalanceAccount('2099')).toBe(false)
+    expect(isBalanceAccount('3001')).toBe(false)
   })
 })

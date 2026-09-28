@@ -13,6 +13,52 @@ export interface NEDeclarationRutor {
   R11: number  // Årets resultat (beräknat)
 }
 
+// NE-bilaga balansposter B1-B16 (sidan 1, förenklat årsbokslut). Fältkoder och
+// kontokopplingar: Skatteverkets fältnamnstabell NE_SKV2161-13-02-25-02 (2025P4)
+// och BAS kopplingstabell "NE - Enskilda näringsidkare, förenklat årsbokslut".
+export interface NEBalansposter {
+  B1: number   // Immateriella anläggningstillgångar (1000-1099)
+  B2: number   // Byggnader och markanläggningar (1100-1129, 1140-1179, 1190-1199)
+  B3: number   // Mark och andra tillgångar som inte får skrivas av (1130-1139, 1180-1189)
+  B4: number   // Maskiner och inventarier (1200-1299)
+  B5: number   // Övriga anläggningstillgångar (1300-1399)
+  B6: number   // Varulager (1400-1499)
+  B7: number   // Kundfordringar (1500-1599)
+  B8: number   // Övriga fordringar (1600-1799)
+  B9: number   // Kassa och bank (1900-1999)
+  B10: number  // Eget kapital = tillgångar minus skulder (beräknat, inte ur 20xx)
+  B11: number  // Obeskattade reserver (2100-2199)
+  B12: number  // Avsättningar (2200-2299)
+  B13: number  // Låneskulder (2300-2399)
+  B14: number  // Skatteskulder inkl. moms och personalskatt (2500-2799)
+  B15: number  // Leverantörsskulder (2440-2449)
+  B16: number  // Övriga skulder (2400-2439, 2450-2499, 2800-2999)
+}
+
+export interface NEAccountRange {
+  start: string
+  end: string
+  exclude?: string[]
+}
+
+// Balance mapping configuration (B10 is derived, so it has no mapping)
+export interface NEBalanceMapping {
+  post: Exclude<keyof NEBalansposter, 'B10'>
+  description: string
+  accountRanges: NEAccountRange[]
+  isDebitNormal: boolean  // true = tillgång (debetsaldo), false = skuld (kreditsaldo)
+}
+
+// Per-post breakdown of the accounts behind a ruta or balanspost
+export interface NEPostBreakdown {
+  accounts: Array<{
+    accountNumber: string
+    accountName: string
+    amount: number
+  }>
+  total: number
+}
+
 // NE account mapping configuration
 export interface NEAccountMapping {
   ruta: keyof NEDeclarationRutor
@@ -36,14 +82,10 @@ export interface NEDeclaration {
   }
   rutor: NEDeclarationRutor
   // Detailed breakdown per ruta
-  breakdown: Record<keyof NEDeclarationRutor, {
-    accounts: Array<{
-      accountNumber: string
-      accountName: string
-      amount: number
-    }>
-    total: number
-  }>
+  breakdown: Record<keyof NEDeclarationRutor, NEPostBreakdown>
+  // Balansposter B1-B16 (sidan 1) med breakdown per konto
+  balans: NEBalansposter
+  balansBreakdown: Record<keyof NEBalansposter, NEPostBreakdown>
   // Company info for SRU (orgNumber for enskild firma is the owner's personnummer)
   companyInfo: {
     companyName: string

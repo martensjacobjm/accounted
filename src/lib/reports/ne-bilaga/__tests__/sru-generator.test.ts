@@ -3,12 +3,14 @@ import {
   generateNESRUSubmission,
   validateBlanketterSru,
   getZipFilename,
+  BLANKETTER_FILENAME,
 } from '../sru-generator'
 import { encodeISO88591 } from '@/lib/reports/sru-encoding'
-import type { NEDeclaration, NEDeclarationRutor } from '../types'
+import type { NEBalansposter, NEDeclaration, NEDeclarationRutor } from '../types'
 
 function makeDeclaration(opts: {
   rutor?: Partial<NEDeclarationRutor>
+  balans?: Partial<NEBalansposter>
   companyInfo?: Partial<NEDeclaration['companyInfo']>
   fiscalYear?: Partial<NEDeclaration['fiscalYear']>
 } = {}): NEDeclaration {
@@ -24,6 +26,17 @@ function makeDeclaration(opts: {
       { accounts: [] as { accountNumber: string; accountName: string; amount: number }[], total: rutor[k] },
     ])
   ) as NEDeclaration['breakdown']
+  const balans: NEBalansposter = {
+    B1: 0, B2: 0, B3: 0, B4: 164619, B5: 1700, B6: 0, B7: 0, B8: 12000, B9: 89000,
+    B10: 206571, B11: 0, B12: 0, B13: 50000, B14: 748, B15: 0, B16: 10000,
+    ...opts.balans,
+  }
+  const balansBreakdown = Object.fromEntries(
+    (Object.keys(balans) as (keyof NEBalansposter)[]).map((k) => [
+      k,
+      { accounts: [] as { accountNumber: string; accountName: string; amount: number }[], total: balans[k] },
+    ])
+  ) as NEDeclaration['balansBreakdown']
 
   return {
     fiscalYear: {
@@ -36,6 +49,8 @@ function makeDeclaration(opts: {
     },
     rutor,
     breakdown,
+    balans,
+    balansBreakdown,
     companyInfo: {
       companyName: 'Östgöta Träförädling',
       orgNumber: '199001019802',
@@ -127,6 +142,56 @@ describe('NE-bilaga SRU generator', () => {
       const { blanketterSru } = generateNESRUSubmission(makeDeclaration({ rutor: { R11: -5000 } }))
       expect(blanketterSru).toContain('#UPPGIFT 7440 -5000')
     })
+
+    it('repeats R11 as R12 (7600, sidan 2) so the e-tjänst does not flag the section', () => {
+      const { blanketterSru } = generateNESRUSubmission(makeDeclaration({ rutor: { R11: -90843 } }))
+      expect(blanketterSru).toContain('#UPPGIFT 7440 -90843\r\n')
+      expect(blanketterSru).toContain('#UPPGIFT 7600 -90843\r\n')
+    })
+
+    it('omits R12 when R11 is zero', () => {
+      const { blanketterSru } = generateNESRUSubmission(makeDeclaration({ rutor: { R11: 0 } }))
+      expect(blanketterSru).not.toContain('#UPPGIFT 7600')
+    })
+
+    // Fältkoder från Skatteverkets NE_SKV2161-13-02-25-02.xls (2025P4).
+    it.each([
+      ['B1', '7200'], ['B2', '7210'], ['B3', '7211'], ['B4', '7212'], ['B5', '7213'],
+      ['B6', '7240'], ['B7', '7250'], ['B8', '7260'], ['B9', '7280'], ['B10', '7300'],
+      ['B11', '7320'], ['B12', '7330'], ['B13', '7380'], ['B14', '7381'], ['B15', '7382'],
+      ['B16', '7383'],
+    ] as [keyof NEBalansposter, string][])('emits %s as fältkod %s', (post, code) => {
+      const { blanketterSru } = generateNESRUSubmission(
+        makeDeclaration({ balans: { [post]: 4321 } }),
+      )
+      expect(blanketterSru).toContain(`#UPPGIFT ${code} 4321\r\n`)
+    })
+
+    it('writes balansposter before R1 and omits zero-valued posts', () => {
+      const { blanketterSru } = generateNESRUSubmission(makeDeclaration())
+      const lines = blanketterSru.split('\r\n')
+      const idx = (code: string) => lines.findIndex((l) => l.startsWith(`#UPPGIFT ${code} `))
+      expect(idx('7212')).toBeGreaterThan(idx('7012'))
+      expect(idx('7212')).toBeLessThan(idx('7400'))
+      expect(blanketterSru).toContain('#UPPGIFT 7212 164619\r\n')
+      expect(blanketterSru).toContain('#UPPGIFT 7300 206571\r\n')
+      expect(blanketterSru).not.toContain('#UPPGIFT 7200 ')
+      expect(blanketterSru).not.toContain('#UPPGIFT 7320 ')
+    })
+
+    it('keeps a negative eget kapital with its sign (Numeriskt_A allows it)', () => {
+      const { blanketterSru } = generateNESRUSubmission(makeDeclaration({ balans: { B10: -1200 } }))
+      expect(blanketterSru).toContain('#UPPGIFT 7300 -1200\r\n')
+    })
+
+    it('never emits a fältkod twice', () => {
+      const { blanketterSru } = generateNESRUSubmission(makeDeclaration())
+      const codes = blanketterSru
+        .split('\r\n')
+        .filter((l) => l.startsWith('#UPPGIFT '))
+        .map((l) => l.split(' ')[1])
+      expect(new Set(codes).size).toBe(codes.length)
+    })
   })
 
   describe('identity normalization (enskild firma personnummer)', () => {
@@ -165,6 +230,12 @@ describe('NE-bilaga SRU generator', () => {
       expect(() =>
         generateNESRUSubmission(makeDeclaration({ companyInfo: { orgNumber: '12345' } }))
       ).toThrow(/personnummer/i)
+    })
+  })
+
+  describe('BLANKETTER_FILENAME', () => {
+    it('matches the filename Skatteverket tells the user to pick in the NE import', () => {
+      expect(BLANKETTER_FILENAME).toBe('blanketter.sru')
     })
   })
 

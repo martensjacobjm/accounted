@@ -2,9 +2,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { generateTrialBalance } from '@/lib/reports/trial-balance'
 import type { FiscalPeriod } from '@/types'
 import type {
+  NEAccountMapping,
+  NEAccountRange,
+  NEBalanceMapping,
+  NEBalansposter,
   NEDeclaration,
   NEDeclarationRutor,
-  NEAccountMapping,
+  NEPostBreakdown,
 } from './types'
 
 /**
@@ -25,6 +29,11 @@ import type {
  * R9:  Avskrivningar fastighet (7820)
  * R10: Avskrivningar övrigt (7700-7899 excl 7820)
  * R11: Årets resultat (calculated)
+ *
+ * Balansposter B1-B16 (NE_BALANCE_MAPPINGS): closing balances of class 1-2 per
+ * BAS kopplingstabell NE (förenklat årsbokslut); B10 eget kapital is derived as
+ * tillgångar minus skulder, so the 20xx accounts and the result transfer never
+ * enter the form. Fältkoder: Skatteverket NE_SKV2161-13-02-25-02 (2025P4).
  *
  * Gift handling:
  * - Gåvor MED motprestation: R1 (momspliktig bytestransaktion)
@@ -136,20 +145,125 @@ export function isResultAccount(accountNumber: string): boolean {
 }
 
 /**
+ * Balansposter B1-B16 per BAS kopplingstabell "NE - Enskilda näringsidkare,
+ * förenklat årsbokslut" (bas.se/kontoplaner/sru, NE_K1). Eget kapital (B10)
+ * har ingen mappning: det beräknas som tillgångar minus skulder.
+ */
+export const NE_BALANCE_MAPPINGS: NEBalanceMapping[] = [
+  { post: 'B1', description: 'Immateriella anläggningstillgångar', accountRanges: [{ start: '1000', end: '1099' }], isDebitNormal: true },
+  {
+    post: 'B2',
+    description: 'Byggnader och markanläggningar',
+    accountRanges: [{ start: '1100', end: '1129' }, { start: '1140', end: '1179' }, { start: '1190', end: '1199' }],
+    isDebitNormal: true,
+  },
+  {
+    post: 'B3',
+    description: 'Mark och andra tillgångar som inte får skrivas av',
+    accountRanges: [{ start: '1130', end: '1139' }, { start: '1180', end: '1189' }],
+    isDebitNormal: true,
+  },
+  { post: 'B4', description: 'Maskiner och inventarier', accountRanges: [{ start: '1200', end: '1299' }], isDebitNormal: true },
+  { post: 'B5', description: 'Övriga anläggningstillgångar', accountRanges: [{ start: '1300', end: '1399' }], isDebitNormal: true },
+  { post: 'B6', description: 'Varulager', accountRanges: [{ start: '1400', end: '1499' }], isDebitNormal: true },
+  { post: 'B7', description: 'Kundfordringar', accountRanges: [{ start: '1500', end: '1599' }], isDebitNormal: true },
+  { post: 'B8', description: 'Övriga fordringar', accountRanges: [{ start: '1600', end: '1799' }], isDebitNormal: true },
+  { post: 'B9', description: 'Kassa och bank', accountRanges: [{ start: '1900', end: '1999' }], isDebitNormal: true },
+  { post: 'B11', description: 'Obeskattade reserver', accountRanges: [{ start: '2100', end: '2199' }], isDebitNormal: false },
+  { post: 'B12', description: 'Avsättningar', accountRanges: [{ start: '2200', end: '2299' }], isDebitNormal: false },
+  { post: 'B13', description: 'Låneskulder', accountRanges: [{ start: '2300', end: '2399' }], isDebitNormal: false },
+  { post: 'B14', description: 'Skatteskulder', accountRanges: [{ start: '2500', end: '2799' }], isDebitNormal: false },
+  { post: 'B15', description: 'Leverantörsskulder', accountRanges: [{ start: '2440', end: '2449' }], isDebitNormal: false },
+  {
+    post: 'B16',
+    description: 'Övriga skulder',
+    accountRanges: [{ start: '2400', end: '2439' }, { start: '2450', end: '2499' }, { start: '2800', end: '2999' }],
+    isDebitNormal: false,
+  },
+]
+
+const NE_BALANS_KEYS: (keyof NEBalansposter)[] = [
+  'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10', 'B11', 'B12', 'B13', 'B14', 'B15', 'B16',
+]
+const NE_RUTA_KEYS: (keyof NEDeclarationRutor)[] = [
+  'R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7', 'R8', 'R9', 'R10', 'R11',
+]
+
+/**
+ * Balanskonton (klass 1-2) utom eget kapital 20xx, som medvetet saknar
+ * NE-post: B10 beräknas som tillgångar minus skulder.
+ */
+export function isBalanceAccount(accountNumber: string): boolean {
+  if (accountNumber >= '2000' && accountNumber <= '2099') return false
+  return accountNumber >= '1000' && accountNumber <= '2999'
+}
+
+/**
  * Check if an account number falls within a mapping's ranges
  */
-function isAccountInMapping(accountNumber: string, mapping: NEAccountMapping): boolean {
-  for (const range of mapping.accountRanges) {
-    const num = accountNumber
-    if (num >= range.start && num <= range.end) {
+function isAccountInRanges(accountNumber: string, ranges: NEAccountRange[]): boolean {
+  for (const range of ranges) {
+    if (accountNumber >= range.start && accountNumber <= range.end) {
       // Check exclusions
-      if (range.exclude && range.exclude.includes(num)) {
+      if (range.exclude && range.exclude.includes(accountNumber)) {
         continue
       }
       return true
     }
   }
   return false
+}
+
+interface UnmatchedAccount {
+  accountNumber: string
+  balance: number
+}
+
+/**
+ * Sum account balances into posts by the first matching mapping. Debit-normal
+ * posts keep the net balance (debit minus credit), credit-normal posts negate
+ * it, so every post reads as a positive amount in its natural direction.
+ * Accounts with a balance that match no mapping come back as `unmatched`; the
+ * caller decides which of them deserve a warning. Shared by R1-R10 and B1-B16
+ * so the two tables can never drift in how they treat sign or rounding.
+ */
+function sumAccountsByMapping<K extends string>(
+  mappings: ReadonlyArray<{ key: K; accountRanges: NEAccountRange[]; isDebitNormal: boolean }>,
+  keys: readonly K[],
+  accountBalances: Map<string, number>,
+  accountNameMap: Map<string, string>,
+): { totals: Record<K, number>; breakdown: Record<K, NEPostBreakdown>; unmatched: UnmatchedAccount[] } {
+  const totals = Object.fromEntries(keys.map((k) => [k, 0])) as Record<K, number>
+  const breakdown = Object.fromEntries(
+    keys.map((k) => [k, { accounts: [], total: 0 }]),
+  ) as Record<K, NEPostBreakdown>
+  const unmatched: UnmatchedAccount[] = []
+
+  for (const [accountNumber, balance] of accountBalances) {
+    if (Math.abs(balance) < 0.01) continue
+    const mapping = mappings.find((m) => isAccountInRanges(accountNumber, m.accountRanges))
+    if (!mapping) {
+      unmatched.push({ accountNumber, balance })
+      continue
+    }
+    const amount = mapping.isDebitNormal ? balance : -balance
+    totals[mapping.key] += amount
+    breakdown[mapping.key].accounts.push({
+      accountNumber,
+      accountName: accountNameMap.get(accountNumber) || `Konto ${accountNumber}`,
+      amount: roundToKrona(amount),
+    })
+  }
+
+  for (const key of keys) {
+    totals[key] = roundToKrona(totals[key])
+    breakdown[key].total = totals[key]
+  }
+  return { totals, breakdown, unmatched }
+}
+
+function formatUnmatched(accounts: UnmatchedAccount[]): string {
+  return accounts.map((a) => `${a.accountNumber} (${roundToKrona(a.balance)} kr)`).join(', ')
 }
 
 /**
@@ -224,81 +338,15 @@ export async function generateNEDeclaration(
     )
   }
 
-  // Map account balances to NE rutor
-  const rutor: NEDeclarationRutor = {
-    R1: 0,
-    R2: 0,
-    R3: 0,
-    R4: 0,
-    R5: 0,
-    R6: 0,
-    R7: 0,
-    R8: 0,
-    R9: 0,
-    R10: 0,
-    R11: 0,
-  }
-
-  const breakdown: Record<keyof NEDeclarationRutor, {
-    accounts: Array<{ accountNumber: string; accountName: string; amount: number }>
-    total: number
-  }> = {
-    R1: { accounts: [], total: 0 },
-    R2: { accounts: [], total: 0 },
-    R3: { accounts: [], total: 0 },
-    R4: { accounts: [], total: 0 },
-    R5: { accounts: [], total: 0 },
-    R6: { accounts: [], total: 0 },
-    R7: { accounts: [], total: 0 },
-    R8: { accounts: [], total: 0 },
-    R9: { accounts: [], total: 0 },
-    R10: { accounts: [], total: 0 },
-    R11: { accounts: [], total: 0 },
-  }
-
-  const warnings: string[] = []
-
-  // Process each account balance
-  const unmapped: string[] = []
-  for (const [accountNumber, balance] of accountBalances) {
-    // Skip zero balances
-    if (Math.abs(balance) < 0.01) continue
-
-    // Find which ruta this account belongs to
-    let matched = false
-    for (const mapping of NE_ACCOUNT_MAPPINGS) {
-      if (isAccountInMapping(accountNumber, mapping)) {
-        // For revenue accounts (credit normal), negate the balance
-        // For expense accounts (debit normal), use as-is
-        // Net balance is debit - credit, so:
-        // - Revenue accounts have negative net balance (credit > debit)
-        // - Expense accounts have positive net balance (debit > credit)
-        const amount = mapping.isExpense ? balance : -balance
-
-        rutor[mapping.ruta] += amount
-
-        breakdown[mapping.ruta].accounts.push({
-          accountNumber,
-          accountName: accountNameMap.get(accountNumber) || `Konto ${accountNumber}`,
-          amount: roundToKrona(amount),
-        })
-
-        matched = true
-        break // Account matched, no need to check other mappings
-      }
-    }
-    if (!matched && isResultAccount(accountNumber)) {
-      unmapped.push(`${accountNumber} (${roundToKrona(balance)} kr)`)
-    }
-  }
-
-  // Round all rutor to whole numbers
-  for (const key of Object.keys(rutor) as (keyof NEDeclarationRutor)[]) {
-    if (key !== 'R11') {
-      rutor[key] = roundToKrona(rutor[key])
-      breakdown[key].total = rutor[key]
-    }
-  }
+  // Resultaträkning R1-R10 (R11 derived) and balansräkning B1-B16 (B10 derived)
+  const resultat = sumAccountsByMapping(
+    NE_ACCOUNT_MAPPINGS.map((m) => ({ key: m.ruta, accountRanges: m.accountRanges, isDebitNormal: m.isExpense })),
+    NE_RUTA_KEYS,
+    accountBalances,
+    accountNameMap,
+  )
+  const rutor = resultat.totals
+  const breakdown = resultat.breakdown
 
   // Calculate R11 (Årets resultat)
   // Result = Revenue (R1+R2+R3+R4) - Expenses (R5+R6+R7+R8+R9+R10)
@@ -306,6 +354,27 @@ export async function generateNEDeclaration(
   const totalExpenses = rutor.R5 + rutor.R6 + rutor.R7 + rutor.R8 + rutor.R9 + rutor.R10
   rutor.R11 = totalRevenue - totalExpenses
   breakdown.R11.total = rutor.R11
+
+  const balansSum = sumAccountsByMapping(
+    NE_BALANCE_MAPPINGS.map((m) => ({ key: m.post, accountRanges: m.accountRanges, isDebitNormal: m.isDebitNormal })),
+    NE_BALANS_KEYS,
+    accountBalances,
+    accountNameMap,
+  )
+  const balans = balansSum.totals
+  const balansBreakdown = balansSum.breakdown
+
+  // B10 Eget kapital = tillgångar (B1-B9) minus skulder (B11-B16). Derived, so it
+  // holds whether or not the year's result has been transferred into 20xx.
+  const totalAssets = balans.B1 + balans.B2 + balans.B3 + balans.B4 + balans.B5 +
+    balans.B6 + balans.B7 + balans.B8 + balans.B9
+  const totalLiabilities = balans.B11 + balans.B12 + balans.B13 + balans.B14 + balans.B15 + balans.B16
+  balans.B10 = totalAssets - totalLiabilities
+  balansBreakdown.B10.total = balans.B10
+
+  const warnings: string[] = []
+  const unmappedResult = resultat.unmatched.filter((a) => isResultAccount(a.accountNumber))
+  const unmappedBalance = balansSum.unmatched.filter((a) => isBalanceAccount(a.accountNumber))
 
   // Add warnings
   if (!(period as FiscalPeriod).is_closed) {
@@ -316,10 +385,17 @@ export async function generateNEDeclaration(
     warnings.push('Inga bokförda intäkter eller kostnader hittades för perioden.')
   }
 
-  if (unmapped.length > 0) {
+  if (unmappedResult.length > 0) {
     warnings.push(
-      `Resultatkonton utan NE-ruta, ingår inte i R1-R11: ${unmapped.join(', ')}. ` +
+      `Resultatkonton utan NE-ruta, ingår inte i R1-R11: ${formatUnmatched(unmappedResult)}. ` +
         'Kontrollera konteringen eller komplettera NE-bilagan för hand.',
+    )
+  }
+
+  if (unmappedBalance.length > 0) {
+    warnings.push(
+      `Balanskonton utan NE-post, ingår inte i B1-B16: ${formatUnmatched(unmappedBalance)}. ` +
+        'Kontrollera konteringen eller komplettera balansräkningen för hand.',
     )
   }
 
@@ -333,6 +409,8 @@ export async function generateNEDeclaration(
     },
     rutor,
     breakdown,
+    balans,
+    balansBreakdown,
     companyInfo: {
       companyName: settings?.company_name || 'Okänt företag',
       orgNumber: settings?.org_number || null,
