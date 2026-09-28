@@ -226,3 +226,44 @@ describe('generateNEDeclaration: balansposter B1-B16', () => {
     expect(result.balans.B10).toBe(1_000)
   })
 })
+
+describe('generateNEDeclaration: posts on the wrong side of the balance sheet', () => {
+  it('reports debit-balance liabilities in B8 and credit-balance assets in B16, B10 unchanged', async () => {
+    // bok.dalavs.se 2025: 2518 betald F-skatt, 2650 moms att få tillbaka, 2710/2731
+    // skattekonto all carry debit balances; 1070 goodwill carries a credit balance.
+    vi.mocked(generateTrialBalance).mockResolvedValue({
+      rows: [
+        row('1070', 'Goodwill', -200),
+        row('1720', 'Förutbetalda leasingavgifter', 60_000),
+        row('1930', 'Företagskonto', 9.7),
+        row('2352', 'Lån arbetsmaskin', -123_745.22),
+        row('2518', 'Betald F-skatt', 26_580),
+        row('2650', 'Redovisningskonto för moms', 5_596.19),
+        row('2710', 'Personalskatt', 1_695),
+        row('3001', 'Försäljning', -100),
+        row('5010', 'Lokalhyra', 100),
+      ],
+      totalDebit: 0,
+      totalCredit: 0,
+      isBalanced: true,
+    })
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await generateNEDeclaration(makeSupabase() as any, COMPANY_ID, PERIOD_ID)
+
+    expect(result.balans.B14).toBe(0)
+    expect(result.balans.B8).toBe(60_000 + 33_871)
+    expect(result.balansBreakdown.B8.accounts.map((a) => a.accountNumber)).toEqual(['1720', '2518', '2650', '2710'])
+    expect(result.balansBreakdown.B8.accounts.map((a) => a.amount)).toEqual([60_000, 26_580, 5_596, 1_695])
+    expect(result.balansBreakdown.B14.accounts).toEqual([])
+    expect(result.balans.B1).toBe(0)
+    expect(result.balans.B16).toBe(200)
+    expect(result.balansBreakdown.B16.accounts).toEqual([{ accountNumber: '1070', accountName: 'Goodwill', amount: 200 }])
+    // B10 = tillgångar - skulder is the same before and after the move
+    expect(result.balans.B10).toBe(60_000 + 10 + 33_871 - 123_745 - 200)
+    const moved = result.warnings.filter((w) => w.includes('åt fel håll'))
+    expect(moved).toHaveLength(2)
+    expect(moved[0]).toContain('B14 Skatteskulder hade 33871 kr åt fel håll (2518, 2650, 2710) och redovisas i stället i B8')
+    expect(moved[1]).toContain('B1 Immateriella anläggningstillgångar hade 200 kr åt fel håll (1070) och redovisas i stället i B16')
+  })
+})

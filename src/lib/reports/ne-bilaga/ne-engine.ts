@@ -266,6 +266,49 @@ function formatUnmatched(accounts: UnmatchedAccount[]): string {
   return accounts.map((a) => `${a.accountNumber} (${roundToKrona(a.balance)} kr)`).join(', ')
 }
 
+const NE_ASSET_POSTS: (keyof NEBalansposter)[] = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9']
+const NE_LIABILITY_POSTS: (keyof NEBalansposter)[] = ['B11', 'B12', 'B13', 'B14', 'B15', 'B16']
+
+/**
+ * A post that nets to the wrong side is reported on the other side of the
+ * balance sheet: a liability post with a debit balance (paid F-skatt on 2518,
+ * moms to recover on 2650, skattekonto on 2731) is a receivable and goes to
+ * B8 Övriga fordringar; an asset post with a credit balance goes to B16 Övriga
+ * skulder. Contra accounts net inside their own post first (1229 inside B4),
+ * so only the post total decides. B10 is unchanged by the move. Every move is
+ * reported as a warning so the reclassification is visible, not silent.
+ */
+function reclassifyNegativePosts(
+  balans: NEBalansposter,
+  breakdown: Record<keyof NEBalansposter, NEPostBreakdown>,
+): { balans: NEBalansposter; breakdown: Record<keyof NEBalansposter, NEPostBreakdown>; warnings: string[] } {
+  const moves = [
+    ...NE_LIABILITY_POSTS.filter((p) => balans[p] < 0).map((from) => ({ from, to: 'B8' as const })),
+    ...NE_ASSET_POSTS.filter((p) => balans[p] < 0).map((from) => ({ from, to: 'B16' as const })),
+  ]
+  const nextBalans = { ...balans }
+  const nextBreakdown = { ...breakdown }
+  const warnings: string[] = []
+
+  for (const { from, to } of moves) {
+    const amount = -balans[from]
+    const movedAccounts = breakdown[from].accounts.map((a) => ({ ...a, amount: -a.amount }))
+    nextBalans[to] += amount
+    nextBalans[from] = 0
+    nextBreakdown[to] = {
+      accounts: [...nextBreakdown[to].accounts, ...movedAccounts],
+      total: nextBalans[to],
+    }
+    nextBreakdown[from] = { accounts: [], total: 0 }
+    const description = NE_BALANCE_MAPPINGS.find((m) => m.post === from)?.description ?? from
+    warnings.push(
+      `${from} ${description} hade ${amount} kr åt fel håll (${movedAccounts.map((a) => a.accountNumber).join(', ')}) ` +
+        `och redovisas i stället i ${to}. Kontrollera konteringen.`,
+    )
+  }
+  return { balans: nextBalans, breakdown: nextBreakdown, warnings }
+}
+
 /**
  * Round to nearest krona (whole number) for NE declaration
  */
@@ -361,8 +404,9 @@ export async function generateNEDeclaration(
     accountBalances,
     accountNameMap,
   )
-  const balans = balansSum.totals
-  const balansBreakdown = balansSum.breakdown
+  const reclassified = reclassifyNegativePosts(balansSum.totals, balansSum.breakdown)
+  const balans = reclassified.balans
+  const balansBreakdown = reclassified.breakdown
 
   // B10 Eget kapital = tillgångar (B1-B9) minus skulder (B11-B16). Derived, so it
   // holds whether or not the year's result has been transferred into 20xx.
@@ -372,7 +416,7 @@ export async function generateNEDeclaration(
   balans.B10 = totalAssets - totalLiabilities
   balansBreakdown.B10.total = balans.B10
 
-  const warnings: string[] = []
+  const warnings: string[] = [...reclassified.warnings]
   const unmappedResult = resultat.unmatched.filter((a) => isResultAccount(a.accountNumber))
   const unmappedBalance = balansSum.unmatched.filter((a) => isBalanceAccount(a.accountNumber))
 
