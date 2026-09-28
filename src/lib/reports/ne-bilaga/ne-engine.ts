@@ -235,7 +235,7 @@ function sumAccountsByMapping<K extends string>(
 ): { totals: Record<K, number>; breakdown: Record<K, NEPostBreakdown>; unmatched: UnmatchedAccount[] } {
   const totals = Object.fromEntries(keys.map((k) => [k, 0])) as Record<K, number>
   const breakdown = Object.fromEntries(
-    keys.map((k) => [k, { accounts: [], total: 0 }]),
+    keys.map((k) => [k, { accounts: [], total: 0 } as NEPostBreakdown]),
   ) as Record<K, NEPostBreakdown>
   const unmatched: UnmatchedAccount[] = []
 

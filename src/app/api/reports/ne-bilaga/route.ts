@@ -48,7 +48,7 @@ export const GET = withRouteContext(
         if (format === 'sru') {
           // The NE import in Inkomstdeklaration 1 takes blanketter.sru alone; the zip
           // was rejected there ("Filen ... innehåller fel", 2026-09-10).
-          return new NextResponse(blanketterBytes, {
+          return new NextResponse(Buffer.from(blanketterBytes), {
             status: 200,
             headers: {
               'Content-Type': 'application/octet-stream',
