@@ -25,6 +25,12 @@ describe('agent ground rules: bookkeeping heuristics it owns', () => {
     expect(text).toContain('KÄNDA MOTPARTER')
   })
 
+  it('treats an HB/KB delägare draw as eget uttag, not lön, and points at the atom', () => {
+    expect(text).toContain('handelsbolag eller kommanditbolag')
+    expect(text).toContain('aldrig lön')
+    expect(text).toContain('horizontal/swedish-hb-kb-beskattning')
+  })
+
   it('still renders as a non-trivial joined block', () => {
     expect(AGENT_GROUND_RULES.length).toBeGreaterThan(10)
     expect(text.split('\n').length).toBeGreaterThan(10)

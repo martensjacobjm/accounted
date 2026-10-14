@@ -13237,10 +13237,17 @@ export const tools: McpTool[] = [
       // Commit path: stage each above-threshold match through pending_operations.
       // Per-item failure isolation: one bad match doesn't kill the rest.
       const stageFailures: { transaction_id: string; invoice_id: string; error: string }[] = []
+      // The staged envelopes go back to the caller (fork 2026-10-15): the chat
+      // loop renders one approval card per envelope and stamps each with the
+      // conversation, which a bare staged_count could not give it. Returned
+      // but not declared in outputSchema: the tools/list payload guard
+      // (payload-size.bench.test.ts) has two tokens of headroom, and the
+      // schema has no additionalProperties: false.
+      const operations: unknown[] = []
       let stagedCount = 0
       for (const p of proposed) {
         try {
-          await stagePendingOperation(
+          const staged = await stagePendingOperation(
             supabase,
             companyId,
             userId,
@@ -13259,6 +13266,7 @@ export const tools: McpTool[] = [
             },
             actor,
           )
+          operations.push(staged)
           stagedCount++
         } catch (err) {
           stageFailures.push({
@@ -13280,6 +13288,7 @@ export const tools: McpTool[] = [
         proposals,
         staged_count: stagedCount,
         stage_failures: stageFailures,
+        operations,
       }
     },
   },

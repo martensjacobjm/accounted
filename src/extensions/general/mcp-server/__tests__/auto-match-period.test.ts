@@ -146,3 +146,72 @@ describe('gnubok_auto_match_period: dry run', () => {
     expect(result.scanned_transactions).toBe(2)
   })
 })
+
+// Fork 2026-10-15: the commit path returns its staged envelopes so the chat
+// loop can render one approval card per match (run-turn collectStagedOperations).
+// Before, only staged_count came back and the matches sat unseen in Granskning.
+describe('gnubok_auto_match_period: commit path returns the staged envelopes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function commitMock(transactions: unknown[]) {
+    let opSeq = 0
+    const chainFor = (table: string): unknown => {
+      let inserted = false
+      const proxy: unknown = new Proxy(
+        {},
+        {
+          get(_t, prop) {
+            if (prop === 'then') {
+              const data =
+                table === 'transactions'
+                  ? transactions
+                  : table === 'pending_operations' && inserted
+                    ? { id: `op-${++opSeq}`, created_at: '2026-10-15T00:00:00Z' }
+                    : null
+              return (resolve: (v: unknown) => void) => resolve({ data, error: null })
+            }
+            return () => {
+              if (prop === 'insert') inserted = true
+              return proxy
+            }
+          },
+        },
+      )
+      return proxy
+    }
+    return {
+      from: vi.fn().mockImplementation((table: string) => chainFor(table)),
+      rpc: vi.fn().mockImplementation(() => chainFor('rpc')),
+    } as never
+  }
+
+  it('dry_run=false: one staged envelope with an operation_id per staged match', async () => {
+    const txs = [
+      { id: 't1', date: '2026-03-01', amount: 1000, currency: 'SEK', description: 'Pay 1', merchant_name: null, reference: null, journal_entry_id: null, invoice_id: null },
+      { id: 't2', date: '2026-03-02', amount: 500, currency: 'SEK', description: 'Pay 2', merchant_name: null, reference: null, journal_entry_id: null, invoice_id: null },
+    ]
+    vi.mocked(findMatchingInvoices)
+      .mockResolvedValueOnce([
+        { invoice: { id: 'i1', invoice_number: 'INV-1', total: 1000, customer: { name: 'Acme' } } as never, confidence: 0.95, matchReason: 'Exakt belopp + kund' },
+      ])
+      .mockResolvedValueOnce([
+        { invoice: { id: 'i2', invoice_number: 'INV-2', total: 500, customer: { name: 'Foo' } } as never, confidence: 0.96, matchReason: 'Exakt belopp + kund' },
+      ])
+
+    const tool = tools.find((t) => t.name === 'gnubok_auto_match_period')!
+    const result = (await tool.execute(
+      { date_from: '2026-03-01', date_to: '2026-03-31', confidence_threshold: 0.9, dry_run: false },
+      'company-1',
+      'user-1',
+      commitMock(txs),
+    )) as { staged_count: number; stage_failures: unknown[]; operations: { staged: boolean; operation_id?: string }[] }
+
+    expect(result.stage_failures).toEqual([])
+    expect(result.staged_count).toBe(2)
+    expect(result.operations).toHaveLength(2)
+    expect(result.operations.map((o) => o.staged)).toEqual([true, true])
+    expect(result.operations.map((o) => o.operation_id)).toEqual(['op-1', 'op-2'])
+  })
+})

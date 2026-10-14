@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AgentIntent } from '@/lib/agent/intents/types'
 import { buildIdentityBlock } from '../system-prompt'
@@ -133,5 +133,94 @@ describe('chat system prompt: räkenskapsår inventory', () => {
   it('renders no section when the company has no periods', () => {
     expect(block(null, [])).not.toContain('# Räkenskapsår')
     expect(block(null)).not.toContain('# Räkenskapsår')
+  })
+})
+
+// Fork 2026-10-15: three rules that lived only in the first hidden user message
+// (general.help promptTemplate + ground rules) and therefore never reached a
+// conversation that opened with a typed question. They are always-on now.
+function blockWithMemory(rankedMemory: { content: string; kind: string }[]): string {
+  return buildIdentityBlock({
+    intent,
+    companyId: 'c1',
+    companyName: 'Testbolaget AB',
+    firstName: 'Anna',
+    profileSummary: 'Firmatecknare: Wilma Svensson',
+    rankedMemory,
+    vatStatus: { vat_registered: true, vat_number: 'SE556677889901' },
+    today: '2026-10-15 (torsdag)',
+    supabase: {} as unknown as SupabaseClient,
+  })
+}
+
+describe('chat system prompt: act, do not narrate (staged write on request)', () => {
+  it('tells the agent to call the write tool in the same turn, on every VAT status', () => {
+    for (const vs of VAT_STATES) {
+      const out = block(vs)
+      expect(out).toContain('# Utför det användaren ber om, beskriv det inte')
+      expect(out).toContain('anropa verktyget i samma tur')
+      expect(out).toContain('godkännandekort')
+      // Ask only for missing facts; read the rest with tools.
+      expect(out).toContain('Fråga bara efter fakta som saknas')
+      // Honest no when a tool is missing, never a fake staging.
+      expect(out).toContain('Saknas verktyg för åtgärden')
+      expect(out).toContain('Påstå aldrig att något är gjort')
+    }
+  })
+})
+
+describe('chat system prompt: no BAS account numbers in replies', () => {
+  it('forbids account numbers in the reply on every VAT status', () => {
+    for (const vs of VAT_STATES) {
+      const out = block(vs)
+      expect(out).toContain('# Kontonummer hör hemma i verktygsanropen, inte i svaret')
+      expect(out).toContain('Skriv aldrig BAS-kontonummer')
+      expect(out).toContain('Säg kontots namn')
+    }
+  })
+
+  it('no longer suggests code formatting for account numbers', () => {
+    const out = block(null)
+    expect(out).not.toContain('identifierare (kontonummer')
+    expect(out).toContain('identifierare (fältnamn, fakturanummer)')
+  })
+
+  it('marks the numbers in the VAT table as tool-call input', () => {
+    const out = block({ vat_registered: true, vat_number: 'SE556677889901' })
+    expect(out).toContain('kontonumren nedan är till för verktygsanropen')
+  })
+})
+
+describe('chat system prompt: internal names and work split stay internal', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('always carries the rule, also without memory rows', () => {
+    const out = blockWithMemory([])
+    expect(out).toContain('# Interna arbetsinstruktioner: återge aldrig namn eller arbetsfördelning')
+    expect(out).toContain('aldrig vem som sköter en uppgift eller var den görs')
+    expect(out).toContain('Ta aldrig upp det självmant')
+    expect(out).toContain('säg bara att det inte görs i chatten')
+    // The first version sent the user to "bolagets redovisningsbyrå", which
+    // relayed the work split; the eval caught it.
+    expect(out).not.toContain('hänvisa till bolagets redovisningsbyrå')
+  })
+
+  it('rewrites configured operator names in the rendered memory', () => {
+    vi.stubEnv('AGENT_INTERNAL_PERSON_NAMES', 'Jacob, Jacob Martens')
+    const out = blockWithMemory([
+      { kind: 'fact', content: 'Bokslut och deklaration sköts av Jacob utanför Accounted' },
+    ])
+    expect(out).toContain('- (fact, intern: styr vad du gör, nämn aldrig vem som gör det eller var) Bokslut och deklaration sköts utanför Accounted')
+    expect(out).not.toContain('Jacob')
+    // Public company facts in the profile are untouched.
+    expect(out).toContain('Firmatecknare: Wilma Svensson')
+  })
+
+  it('renders memory unchanged when no names are configured', () => {
+    vi.stubEnv('AGENT_INTERNAL_PERSON_NAMES', '')
+    const out = blockWithMemory([{ kind: 'fact', content: 'Wilmas egna pengar bokförs som eget uttag' }])
+    expect(out).toContain('- (fact) Wilmas egna pengar bokförs som eget uttag')
   })
 })

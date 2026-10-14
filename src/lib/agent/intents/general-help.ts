@@ -65,6 +65,24 @@ export const generalHelp = defineAgentIntent<GeneralHelpArgs, GeneralHelpCapture
   // that write without staging (upload flows, set_quote_status,
   // set_inbox_extracted_data, reject_pending_operation, create_company,
   // calculate_salary_run, audit_package, rot/rut files).
+  // 2026-10-15 (Jacob: "den ska kunna utföra uppgifterna också"): inventory
+  // against the registry (isStagingTool / readOnlyHint). Added: the staging
+  // writes that were still missing (anläggningsregistret create/update/dispose,
+  // link_rot_rut_payout_voucher, propose_fact) and the read-only tools without
+  // side effects (asset register, archive reads, receipt_hunt_worklist,
+  // sie_import_status). Still out, and why:
+  //   approve/reject_pending_operation: the decision stays with the human
+  //   call_tool, stage_tool: MCP bridges for clients without tools/list
+  //   feedback: goes to the upstream product team
+  //   get_task: starts an AI handoff task, not a chat action
+  //   create_company, create_skill: account-level writes without staging
+  //   upload_document, create/complete_document_upload: write directly, and a
+  //     chat turn carries no file (the user uploads in Dokumentinkorgen)
+  //   set_inbox_extracted_data, set_quote_status, resolve_missing,
+  //   calculate_salary_run, generate_rot_rut_file, import_rot_rut_beslut,
+  //   audit_package: write directly without a pending_operation
+  // The guard test in mcp-server/__tests__/chat-whitelist-staging.test.ts
+  // fails when a direct writer lands on this list.
   //
   // Anthropic caches the tools list with the system prompt so a stable
   // whitelist costs nothing per turn after first warm-up.
@@ -152,6 +170,12 @@ export const generalHelp = defineAgentIntent<GeneralHelpArgs, GeneralHelpCapture
     'gnubok_agi_submit',
     'gnubok_vat_declaration_submit',
     'gnubok_settle_rot_rut_payout',
+    // 2026-10-15: remaining staging writes (anläggningsregistret, ROT/RUT link, arkiv fact)
+    'gnubok_create_asset',
+    'gnubok_update_asset',
+    'gnubok_dispose_asset',
+    'gnubok_link_rot_rut_payout_voucher',
+    'gnubok_propose_fact',
     // Knowledge + memory
     'gnubok_search_tools',
     'gnubok_list_skills',
@@ -238,6 +262,20 @@ export const generalHelp = defineAgentIntent<GeneralHelpArgs, GeneralHelpCapture
     'gnubok_list_mileage_trips',
     'gnubok_list_rot_rut_payout_requests',
     'gnubok_agi_status',
+    // 2026-10-15: read-only tools without side effects that were missing
+    'gnubok_list_assets',
+    'gnubok_get_asset',
+    'gnubok_receipt_hunt_worklist',
+    'gnubok_sie_import_status',
+    'gnubok_search_records',
+    'gnubok_list_records',
+    'gnubok_get_record',
+    'gnubok_get_record_links',
+    'gnubok_read_document',
+    'gnubok_ask_document',
+    'gnubok_get_source',
+    'gnubok_get_fact_history',
+    'gnubok_get_neighbourhood',
   ],
 
   model: SONNET_MODEL,
@@ -270,14 +308,16 @@ export const generalHelp = defineAgentIntent<GeneralHelpArgs, GeneralHelpCapture
     lines.push(renderAgentGroundRules())
     lines.push('')
     lines.push('Härifrån kan du (använd verktygen: citera siffrorna):')
-    lines.push('- LÄSA bolagets data: resultatrapport, balansrapport, KPI:er, momsrapport, huvudbok, kund-/leverantörsreskontra, lönejournal, transaktioner, fakturor, kunder, leverantörer, kontoplan, dokumentinkorg, verifikationsluckor. När användaren frågar något analytiskt: anropa rätt verktyg och svara med faktiska siffror, inte uppskattningar.')
+    lines.push('- LÄSA bolagets data: resultatrapport, balansrapport, KPI:er, momsrapport, huvudbok, kund-/leverantörsreskontra, lönejournal, transaktioner, fakturor, kunder, leverantörer, kontoplan, dokumentinkorg, verifikationsluckor, anläggningsregistret (gnubok_list_assets) och avtal och dokument i arkivet (gnubok_search_records, gnubok_ask_document, gnubok_read_document). När användaren frågar något analytiskt: anropa rätt verktyg och svara med faktiska siffror, inte uppskattningar.')
     lines.push('- Svara på regelfrågor: bokföring, moms, lön, bokslut, deklaration. Ladda atominnehåll med gnubok_load_skill vid behov.')
     lines.push('- Söka i journalen efter motpart, beskrivning eller belopp via gnubok_query_journal (t.ex. "har jag bokfört detta förut?").')
     lines.push('- Komma ihåg fakta om bolaget via gnubok_remember_fact / gnubok_forget_fact.')
     lines.push('')
-    lines.push('- UTFÖRA uppgifter som förslag användaren godkänner: kategorisera och bokföra banktransaktioner (gnubok_categorize_transaction, gnubok_match_transaction_to_invoice, gnubok_ignore_transaction, gnubok_bulk_book_transactions), bokföra underlag ur dokumentinkorgen (gnubok_bulk_book_inbox_items, gnubok_create_supplier_invoice_from_inbox, gnubok_approve_supplier_invoice), skapa och rätta verifikationer (gnubok_create_voucher, gnubok_correct_entry, gnubok_reverse_journal_entry, gnubok_set_voucher_note, gnubok_link_document_to_voucher, gnubok_attach_document_to_transaction), kundfakturor (gnubok_create_invoice, gnubok_update_invoice, gnubok_send_invoice, gnubok_mark_invoice_as_sent, gnubok_mark_invoice_as_paid, gnubok_credit_invoice), register (gnubok_create_customer, gnubok_update_customer, gnubok_create_supplier, gnubok_create_article, gnubok_update_article), koppla en banktransaktion till en BEFINTLIG verifikation (gnubok_link_transaction_to_journal_entry; hitta kandidater med gnubok_query_journal och gnubok_list_uncategorized_transactions), ångra en kategorisering (gnubok_uncategorize_transaction), avstämning (gnubok_reconcile_match, gnubok_reconcile_unmatch, gnubok_auto_match_period, gnubok_match_batch_allocate), koppla fakturor till verifikationer (gnubok_link_invoice_to_voucher, gnubok_link_supplier_invoice_to_voucher), samt periodlås, avskrivningar, bokslut, lön, moms och inställningar (se verktygslistan). Varje sådant anrop skapar ett förslag som visas som ett godkännandekort under ditt svar; ingenting bokförs förrän användaren klickar Godkänn.')
+    lines.push('- UTFÖRA uppgifter som förslag användaren godkänner: kategorisera och bokföra banktransaktioner (gnubok_categorize_transaction, gnubok_match_transaction_to_invoice, gnubok_ignore_transaction, gnubok_bulk_book_transactions), bokföra underlag ur dokumentinkorgen (gnubok_bulk_book_inbox_items, gnubok_create_supplier_invoice_from_inbox, gnubok_approve_supplier_invoice), skapa och rätta verifikationer (gnubok_create_voucher, gnubok_correct_entry, gnubok_reverse_journal_entry, gnubok_set_voucher_note, gnubok_link_document_to_voucher, gnubok_attach_document_to_transaction), kundfakturor (gnubok_create_invoice, gnubok_update_invoice, gnubok_send_invoice, gnubok_mark_invoice_as_sent, gnubok_mark_invoice_as_paid, gnubok_credit_invoice), register (gnubok_create_customer, gnubok_update_customer, gnubok_create_supplier, gnubok_create_article, gnubok_update_article), koppla en banktransaktion till en BEFINTLIG verifikation (gnubok_link_transaction_to_journal_entry; hitta kandidater med gnubok_query_journal och gnubok_list_uncategorized_transactions), ångra en kategorisering (gnubok_uncategorize_transaction), avstämning (gnubok_reconcile_match, gnubok_reconcile_unmatch, gnubok_auto_match_period, gnubok_match_batch_allocate), koppla fakturor till verifikationer (gnubok_link_invoice_to_voucher, gnubok_link_supplier_invoice_to_voucher), periodisering (gnubok_propose_accruals, sedan gnubok_create_voucher), anläggningsregistret (gnubok_create_asset, gnubok_update_asset, gnubok_dispose_asset), avskrivningar (gnubok_post_annual_depreciation), momsdeklarationen (gnubok_vat_declaration_validate, sedan gnubok_vat_declaration_submit), AGI (gnubok_generate_agi, gnubok_agi_submit), ROT/RUT-utbetalningen (gnubok_settle_rot_rut_payout, gnubok_link_rot_rut_payout_voucher), samt periodlås, bokslut, lön och inställningar (se verktygslistan). Varje sådant anrop skapar ett förslag som visas som ett godkännandekort under ditt svar; ingenting bokförs förrän användaren klickar Godkänn.')
     lines.push('')
     lines.push('ARBETSGÅNG FÖR SKRIVÅTGÄRDER: (1) Hämta det du behöver först: transaktionen via gnubok_list_uncategorized_transactions eller gnubok_query_journal, underlaget via gnubok_list_inbox_items och gnubok_get_document_content, kund eller leverantör via gnubok_list_customers / gnubok_list_suppliers. (2) Kolla hur motparten bokförts förut med gnubok_query_journal({ text: "<motpart>", limit: 5 }) och följ mönstret om inte underlaget säger annat. (3) Om något är oklart (syfte, deltagare vid representation, belopp som inte stämmer, saknat underlag) ställ EN kort fråga med två eller tre alternativ innan du stagear, och spara svaret med gnubok_remember_fact. (4) Staga ett förslag per post med rätt id (transaction_id, document_id, invoice_id), aldrig gissade id:n. (5) Berätta INTE att du "stagear nu" eller att användaren ska "godkänna i appen", och upprepa inte siffror som kortet redan visar: avsluta med en eller två meningar om VARFÖR du valde som du valde. Saknas underlag helt: staga ändå om bokföringen är entydig och säg att kvittot ska bifogas till verifikationen (öppna den i Bokföring), annars be om underlaget till Dokumentinkorgen först.')
+    lines.push('')
+    lines.push('Verktyg som INTE finns i chatten (säg det rakt i en mening och hänvisa till vyn, låtsas aldrig): ladda upp ett underlag (användaren lägger det i Dokumentinkorgen), ändra avläst data på ett underlag, sätta status på en offert, beräkna en lönekörning (Lön, knappen Beräkna; därefter stagar du bokföringen med gnubok_book_salary_run), skapa ROT/RUT-filen till Skatteverket eller importera beslutet (RUT och ROT), revisionspaketet, annan e-post än fakturautskick, och inlämning av inkomstdeklaration eller årsredovisning.')
     lines.push('')
     lines.push('Du har FULL ÅTKOMST härifrån: allt som finns som verktyg gör du själv när användaren ber om det, även bokslut, periodlås, moms och inställningar. Säg aldrig att du bara kan läsa, att du saknar behörighet eller att användaren måste göra det själv i appen när ett verktyg finns; gör förslaget i stället. Ett misstag (fel makulering, fel konto, fel koppling) rättar du själv med verktygen (gnubok_correct_entry, gnubok_reverse_journal_entry, gnubok_create_voucher, gnubok_uncategorize_transaction). Påstå ALDRIG att du stagat något som du inte faktiskt anropat ett verktyg för.')
     lines.push('')

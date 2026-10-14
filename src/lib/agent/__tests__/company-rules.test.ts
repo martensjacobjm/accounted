@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createQueuedMockSupabase } from '@/tests/helpers'
 import {
   formatCompanyRules,
@@ -68,5 +68,34 @@ describe('renderCompanyRulesBlock', () => {
     const block = renderCompanyRulesBlock(['A', 'B'])
     expect(block[0]).toMatch(/Bolagets regler/)
     expect(block.slice(1)).toEqual(['- A', '- B'])
+  })
+})
+
+describe('internal names never reach a customer-facing model (leak 2026-10)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('neutralizes configured operator names in every rendered rule', () => {
+    vi.stubEnv('AGENT_INTERNAL_PERSON_NAMES', 'Jacob,Jacob Martens')
+    const out = formatCompanyRules([
+      { content: 'Bokslut och deklaration sköts av Jacob utanför Accounted', is_pinned: true, source: 'user_taught', kind: 'fact' },
+    ])
+    expect(out).toEqual(['Intern arbetsinstruktion, återges inte: Bokslut och deklaration sköts utanför Accounted'])
+    expect(out.join(' ')).not.toContain('Jacob')
+  })
+
+  it('leaves rules untouched when no names are configured', () => {
+    vi.stubEnv('AGENT_INTERNAL_PERSON_NAMES', '')
+    const out = formatCompanyRules([
+      { content: 'Alla betalningar utanför banken är Wilmas egna pengar (2018)', is_pinned: false, source: 'user_taught', kind: 'fact' },
+    ])
+    expect(out).toEqual(['Alla betalningar utanför banken är Wilmas egna pengar (2018)'])
+  })
+
+  it('tells the model the rules are internal instructions, not facts to repeat', () => {
+    const [title] = renderCompanyRulesBlock(['A'])
+    expect(title).toContain('interna arbetsinstruktioner')
+    expect(title).toContain('återge aldrig namn')
   })
 })

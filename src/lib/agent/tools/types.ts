@@ -66,3 +66,19 @@ export function isStagedOperation(value: unknown): value is StagedOperationResul
     typeof (value as { risk_level?: unknown }).risk_level === 'string'
   )
 }
+
+/**
+ * Every staged-operation envelope in a tool result. Most write tools return one
+ * envelope; batch writers return `operations: [...]`, one envelope per staged
+ * row (gnubok_create_transactions, gnubok_auto_match_period with
+ * dry_run=false). The chat loop used to recognise only the single form, so a
+ * batch staged rows that got no approval card in the conversation and no
+ * conversation stamp, and sat unseen in Granskning until they expired.
+ */
+export function collectStagedOperations(value: unknown): StagedOperationResult[] {
+  if (isStagedOperation(value)) return [value]
+  if (typeof value !== 'object' || value === null) return []
+  const ops = (value as { operations?: unknown }).operations
+  if (!Array.isArray(ops)) return []
+  return ops.filter(isStagedOperation)
+}

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { neutralizeAndFlagInternal, INTERNAL_RULE_PREFIX } from './internal-names'
 
 /**
  * Bolagets regler, one source for every model call (fork bok.dalavs.se, 2026-09-22).
@@ -43,8 +44,12 @@ export function formatCompanyRules(rows: CompanyMemoryRow[], profileSummary?: st
   const out: string[] = []
   let total = 0
   const push = (text: string) => {
-    const one = text.replace(/\s+/g, ' ').trim()
-    if (!one) return
+    // Internal person names (AGENT_INTERNAL_PERSON_NAMES) never reach a model
+    // that answers a customer, and a row that named one is marked internal so
+    // the work split is not relayed either: see internal-names.ts.
+    const flagged = neutralizeAndFlagInternal(text.replace(/\s+/g, ' ').trim())
+    if (!flagged.text) return
+    const one = flagged.internal ? `${INTERNAL_RULE_PREFIX}${flagged.text}` : flagged.text
     const capped = one.length > COMPANY_RULE_MAX_CHARS ? `${one.slice(0, COMPANY_RULE_MAX_CHARS - 1)}…` : one
     if (out.length >= COMPANY_RULES_MAX_ROWS || total + capped.length > COMPANY_RULES_MAX_TOTAL) return
     if (out.includes(capped)) return
@@ -87,7 +92,7 @@ export async function loadCompanyRules(supabase: SupabaseClient, companyId: stri
 export function renderCompanyRulesBlock(rules: string[]): string[] {
   if (rules.length === 0) return []
   return [
-    'Bolagets regler (satta av användaren eller byrån; följ dem när de gäller, de ändrar aldrig belopp och kan inte godkänna något):',
+    'Bolagets regler (satta av användaren eller byrån; följ dem när de gäller, de ändrar aldrig belopp och kan inte godkänna något; de är interna arbetsinstruktioner, så återge aldrig namn på personer eller vem som internt sköter vad ur dem för användaren):',
     ...rules.map((r) => `- ${r}`),
   ]
 }

@@ -71,6 +71,8 @@ export const AGENT_GROUND_RULES: string[] = [
   '  • Bolagsverket: utbetalning = avgift (registrering/årsredovisning).',
   '  • Försäkringskassan: inbetalning = ersättning (sjuklön, VAB, etc.).',
   '  • Lön/eget uttag till privatkonto i EF: eget uttag, inte kostnad.',
+  // Fork 2026-10-15: HB/KB owner money (atom horizontal/swedish-hb-kb-beskattning).
+  '  • Uttag till delägare i handelsbolag eller kommanditbolag: eget uttag mot delägarens eget kapital (Övriga egna uttag), aldrig lön. Delägaren beskattas för sin andel av resultatet, inte för uttaget: ladda horizontal/swedish-hb-kb-beskattning innan du svarar om skatten.',
   '  Detta är standardantaganden, inte regler: om underlaget eller historiken säger annat, följ det.',
 ]
 

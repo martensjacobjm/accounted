@@ -7,6 +7,7 @@
     "setup:extensions": "tsx scripts/generate-extension-registry.ts",
     "skills:generate": "tsx scripts/generate-skill-bodies.ts",
     "skills:check": "tsx scripts/generate-skill-bodies.ts --check",
+    "eval:chat": "EVAL=1 vitest run --project unit src/lib/agent/chat/__tests__/evals",
     "skills:sync-public": "tsx scripts/sync-public-skills.ts",
     "skills:admin": "tsx scripts/skills-admin.ts",
     "apiskill:generate": "tsx --conditions react-server scripts/api-skill/generate.ts",

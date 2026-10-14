@@ -1102,8 +1102,10 @@ function MessageBubble({
         <div className="w-full max-w-[85%] space-y-2">
           {message.staged.map((s) =>
             s.operation_id ? (
+              // One tool call can stage several operations (batch writers), so
+              // the operation id, not the tool_use_id, keys the card.
               <ApprovalCard
-                key={s.tool_use_id}
+                key={s.operation_id}
                 operationId={s.operation_id}
                 riskLevel={s.risk_level}
                 message={s.message}

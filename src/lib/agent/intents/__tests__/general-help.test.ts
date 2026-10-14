@@ -34,6 +34,29 @@ const WRITE_TOOLS_EXPECTED = [
   'gnubok_lock_period',
   'gnubok_run_year_end',
   'gnubok_update_company_settings',
+  // 2026-10-15 inventory: the staging writes that were still missing
+  'gnubok_create_asset',
+  'gnubok_update_asset',
+  'gnubok_dispose_asset',
+  'gnubok_link_rot_rut_payout_voucher',
+  'gnubok_propose_fact',
+]
+
+// Read-only tools without side effects added by the 2026-10-15 inventory.
+const READ_TOOLS_ADDED = [
+  'gnubok_list_assets',
+  'gnubok_get_asset',
+  'gnubok_receipt_hunt_worklist',
+  'gnubok_sie_import_status',
+  'gnubok_search_records',
+  'gnubok_list_records',
+  'gnubok_get_record',
+  'gnubok_get_record_links',
+  'gnubok_read_document',
+  'gnubok_ask_document',
+  'gnubok_get_source',
+  'gnubok_get_fact_history',
+  'gnubok_get_neighbourhood',
 ]
 
 const NEVER_FROM_CHAT = [
@@ -48,6 +71,17 @@ const NEVER_FROM_CHAT = [
   'gnubok_set_quote_status',
   'gnubok_set_inbox_extracted_data',
   'gnubok_upload_document',
+  // 2026-10-15 inventory: also write without staging, or are bridges
+  'gnubok_create_document_upload',
+  'gnubok_complete_document_upload',
+  'gnubok_calculate_salary_run',
+  'gnubok_generate_rot_rut_file',
+  'gnubok_import_rot_rut_beslut',
+  'gnubok_audit_package',
+  'gnubok_resolve_missing',
+  'gnubok_create_skill',
+  'gnubok_stage_tool',
+  'gnubok_get_task',
 ]
 
 function renderPrompt() {
@@ -92,6 +126,22 @@ describe('general.help: the /chat assistant with staged write tools', () => {
     expect(out).toContain('gnubok_link_transaction_to_journal_entry')
     expect(out).not.toContain('Det som INTE görs härifrån')
     expect(out).toMatch(/Påstå ALDRIG att du stagat/i)
+  })
+
+  it('exposes the read-only tools the inventory added (asset register, archive, receipt hunt)', () => {
+    for (const t of READ_TOOLS_ADDED) {
+      expect(generalHelp.tools).toContain(t)
+    }
+  })
+
+  it('names the new write paths and is honest about what has no tool here', () => {
+    const out = renderPrompt()
+    for (const t of ['gnubok_create_asset', 'gnubok_dispose_asset', 'gnubok_link_rot_rut_payout_voucher', 'gnubok_vat_declaration_submit', 'gnubok_propose_accruals']) {
+      expect(out).toContain(t)
+    }
+    expect(out).toContain('Verktyg som INTE finns i chatten')
+    expect(out).toContain('beräkna en lönekörning')
+    expect(out).toContain('låtsas aldrig')
   })
 
   it('lists every tool once', () => {

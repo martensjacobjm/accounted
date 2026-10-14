@@ -9,7 +9,8 @@ import {
 import type { AgentIntent } from '@/lib/agent/intents/types'
 import { agentToolRegistry } from '@/lib/agent/tools/registry'
 import type { AgentTool, AgentActorContext, StagedOperationResult } from '@/lib/agent/tools/types'
-import { isStagedOperation } from '@/lib/agent/tools/types'
+import { collectStagedOperations } from '@/lib/agent/tools/types'
+import { findLeakedAccountNumbers } from './output-guards'
 import { buildSystemPrompt } from './system-prompt'
 import { loadFiscalYearInventory } from '@/lib/agent/fiscal-years'
 import { createLogger } from '@/lib/logger'
@@ -520,6 +521,19 @@ export async function runChatTurn(args: RunTurnArgs): Promise<void> {
         })
       }
 
+      // Dispatch only what this intent offers (fork 2026-10-15). The model is
+      // given exactly intent.tools, but a hallucinated or injected tool name,
+      // gnubok_approve_pending_operation above all, must never execute from
+      // chat: the approval click stays with the user.
+      if (!intent.tools.includes(tu.name)) {
+        toolResultBlocks.push({
+          type: 'tool_result',
+          tool_use_id: tu.id,
+          is_error: true,
+          content: `Verktyget ${tu.name} är inte tillgängligt här.`,
+        })
+        continue
+      }
       const tool = agentToolRegistry.get(tu.name)
       if (!tool) {
         toolResultBlocks.push({
@@ -541,9 +555,12 @@ export async function runChatTurn(args: RunTurnArgs): Promise<void> {
         )
 
         // If the tool staged a pending_operation, stamp the agent metadata
-        // for BFL audit reconstructability (plan §5).
-        if (isStagedOperation(result) && result.operation_id) {
-          await stampAgentMetadata(supabase, result.operation_id, {
+        // for BFL audit reconstructability (plan §5). A batch writer returns
+        // one envelope per staged row (collectStagedOperations): each gets its
+        // stamp and its own approval card.
+        for (const staged of collectStagedOperations(result)) {
+          if (!staged.operation_id) continue
+          await stampAgentMetadata(supabase, staged.operation_id, {
             conversation_id: conversationId,
             intent_id: intent.id,
             model,
@@ -555,7 +572,7 @@ export async function runChatTurn(args: RunTurnArgs): Promise<void> {
             tool_use_id: tu.id,
             tool_name: tu.name,
             params: tu.input as Record<string, unknown>,
-            staged: result,
+            staged,
           })
         }
 
@@ -680,6 +697,20 @@ export async function runChatTurn(args: RunTurnArgs): Promise<void> {
       message: 'Assistenten fick slut på utrymme innan svaret blev klart. Försök igen.',
     })
     return
+  }
+
+  // The reply should name accounts, not number them (system prompt "Kontonummer
+  // hör hemma i verktygsanropen"). Logged, never blocked: the text has already
+  // streamed, and a false positive must not cost the user the answer.
+  const accountLeaks = findLeakedAccountNumbers(assistantText)
+  if (accountLeaks.length > 0) {
+    log.warn('assistant reply names BAS account numbers', {
+      conversationId,
+      companyId,
+      intent: intent.id,
+      accounts: accountLeaks.map((l) => l.account),
+      reasons: accountLeaks.map((l) => l.reason),
+    })
   }
 
   emit({ kind: 'turn_complete', assistant_text: assistantText })
