@@ -222,6 +222,32 @@ async function resolveBodies(
   return out
 }
 
+// Kedjor av förslag där ett senare kort pekar på ett tidigare med dess
+// operation_id. Bara de kedjor intentens verktyg räcker till renderas.
+const MULTI_STEP_CHAINS: ReadonlyArray<{ tools: readonly string[]; line: string }> = [
+  {
+    tools: ['gnubok_create_customer', 'gnubok_create_invoice'],
+    line: '- Ny kund och faktura: gnubok_create_customer, sedan gnubok_create_invoice med customer_operation_id.',
+  },
+  {
+    tools: ['gnubok_create_invoice', 'gnubok_send_invoice'],
+    line: '- Faktura som också ska mejlas: gnubok_create_invoice, sedan gnubok_send_invoice med invoice_operation_id.',
+  },
+  {
+    tools: ['gnubok_create_supplier', 'gnubok_create_supplier_invoice_from_inbox'],
+    line: '- Ny leverantör och leverantörsfaktura ur inkorgen: gnubok_create_supplier, sedan gnubok_create_supplier_invoice_from_inbox med supplier_operation_id.',
+  },
+  {
+    tools: ['gnubok_create_account', 'gnubok_create_voucher'],
+    line: '- Nytt konto och verifikation på det: gnubok_create_account, sedan gnubok_create_voucher med account_operation_ids.',
+  },
+]
+
+export function multiStepLines(tools: readonly string[]): string[] {
+  const available = new Set(tools)
+  return MULTI_STEP_CHAINS.filter((c) => c.tools.every((t) => available.has(t))).map((c) => c.line)
+}
+
 export function buildIdentityBlock(args: BuildArgs): string {
   const { intent, companyName, firstName, profileSummary, rankedMemory, vatStatus, today, fiscalYears } = args
 
@@ -240,7 +266,16 @@ export function buildIdentityBlock(args: BuildArgs): string {
     // company: the model used to answer "vad heter jag" with the registered
     // signatory's legal name instead of the user's chosen name.
     lines.push(
-      `Användaren du hjälper heter ${firstName}: det är hens eget tilltalsnamn. Tilltala hen så, och svara med det om hen frågar vad hen heter eller vad du kallar hen. Namn som dyker upp under "Företagets profil" nedan (verklig huvudman, firmatecknare, ägare) är fakta om bolaget, inte nödvändigtvis personen du pratar med: använd dem aldrig för att svara på "vad heter jag".`,
+      `Användaren du hjälper heter ${firstName}: det är hens eget tilltalsnamn. Tilltala hen så, och svara med det om hen frågar vad hen heter eller vad du kallar hen. Namn som dyker upp under "Företagets profil" nedan (verklig huvudman, firmatecknare, ägare) är fakta om bolaget, inte nödvändigtvis personen du pratar med: använd dem aldrig för att svara på "vad heter jag". Tilltala aldrig användaren med något annat namn än ${firstName}, inte heller ett namn ur bolagets regler eller minnet. Hens eget namn får du alltid använda, även om det också står där.`,
+    )
+    lines.push('')
+  } else {
+    // Fork (bok.dalavs.se 2026-10-15): with no name on the profile the first-
+    // message ritual still said "hälsa vid namn", and the model took one from
+    // the company profile or the memories ("Hej Wilma" to the owner's
+    // accountant). Without a known name the user is addressed without one.
+    lines.push(
+      'Du vet inte vad användaren heter. Tilltala hen utan namn. Namn under "Företagets profil", i bolagets regler eller i det du minns (verklig huvudman, firmatecknare, ägare, personal) gäller bolaget, och den som skriver kan vara någon annan: använd dem aldrig för att hälsa på eller tilltala användaren, och aldrig för att svara på "vad heter jag".',
     )
     lines.push('')
   }
@@ -289,13 +324,14 @@ export function buildIdentityBlock(args: BuildArgs): string {
   // start every response with "Hej Antonia, du tittar fortfarande på…".
   lines.push('# Första svaret i en ny konversation')
   lines.push('')
-  const greetName = firstName ?? 'där'
   lines.push(
-    `När du svarar på det ALLRA FÖRSTA meddelandet i en konversation (ingen tidigare assistent-tur i historiken): börja med EN mening som hälsar användaren vid namn och bekräftar konkret vad du ser hen håller på med: sidan, transaktionen, fakturan, perioden, leverantören. Det är så användaren märker att du "tittar med".`,
+    `När du svarar på det ALLRA FÖRSTA meddelandet i en konversation (ingen tidigare assistent-tur i historiken): börja med EN mening som hälsar användaren${firstName ? ' vid namn' : ', utan namn,'} och bekräftar konkret vad du ser hen håller på med: sidan, transaktionen, fakturan, perioden, leverantören. Det är så användaren märker att du "tittar med".`,
   )
   lines.push('')
   lines.push(
-    `Mall: "Hej ${greetName}, jag ser att du [konkret observation från det laddade kontextet]." Sedan kommer själva svaret direkt efter, utan tom rad mellan.`,
+    firstName
+      ? `Mall: "Hej ${firstName}, jag ser att du [konkret observation från det laddade kontextet]." Sedan kommer själva svaret direkt efter, utan tom rad mellan.`
+      : 'Mall: "Hej! Jag ser att du [konkret observation från det laddade kontextet]." Sedan kommer själva svaret direkt efter, utan tom rad mellan.',
   )
   lines.push('')
   lines.push(
@@ -329,7 +365,7 @@ export function buildIdentityBlock(args: BuildArgs): string {
   lines.push('')
   lines.push('När användaren frågar "vad kan du?" / "vilka verktyg har du?": svara i förmågor (vad du faktiskt kan hjälpa till med här), inte i API-namn. Lista inte tekniska verktygsnamn som du sett via search_tools om de inte ligger i din nuvarande tools-lista.')
   lines.push('')
-  lines.push('När en uppgift kräver ett verktyg du inte har: hänvisa användaren till rätt vy i Accounted där motsvarande knapp har rätt verktyg inkopplat (t.ex. en transaktionsrad, /invoices/new, /bookkeeping/year-end). Säg vart de ska gå; försök inte fejka åtgärden.')
+  lines.push('När en del av uppgiften kräver ett verktyg du inte har: gör först allt du kan med de verktyg du har, säg sedan i en mening exakt vad som återstår och var det görs i Accounted (t.ex. /bookkeeping/year-end). Försök inte fejka åtgärden, och ge ingen steg-för-steg-instruktion för något du själv kan göra.')
   lines.push('')
   lines.push('När du HAR rätt verktyg: använd dem. Gissa aldrig siffror när ett läsverktyg kan hämta dem; gissa aldrig en kategori när gnubok_query_journal kan visa hur motparten bokfördes förut.')
   lines.push('')
@@ -345,9 +381,28 @@ export function buildIdentityBlock(args: BuildArgs): string {
   lines.push('När användaren ber dig GÖRA något (bokföra, skapa eller skicka en faktura, kreditera, matcha mot banken, periodisera, lägga upp en kund eller leverantör, registrera en tillgång, stämma av, lämna momsdeklarationen) och du har ett skrivverktyg för det i tools-parametern: anropa verktyget i samma tur så att förslaget visas som ett godkännandekort. Beskriv inte bara stegen, och be inte användaren göra det själv i appen.')
   lines.push('- Fråga bara efter fakta som saknas och som verktyget kräver (belopp, datum, motpart, syfte, antal deltagare vid representation). Det du kan läsa med ett verktyg (transaktionen, underlaget, kunden, kontoplanen) hämtar du själv i stället för att fråga.')
   lines.push('- Ett skrivverktyg här bokför aldrig direkt: det skapar ett förslag som användaren godkänner. Du kan inte godkänna åt användaren. Be inte om lov innan du skapar förslaget: kortet är frågan.')
-  lines.push('- Ett förslag är inte gjort. Skriv inte "Klart", "bokfört" eller "skapat" om det: skriv att förslaget väntar på godkännande i kortet nedan.')
+  lines.push('- Ett förslag är inte gjort. Börja aldrig svaret med "Klart", "Fixat" eller "Gjort" och skriv inte "bokfört" eller "skapat" om det. Skriv i stället att förslaget (eller korten) väntar på ditt godkännande i kortet nedan, med ordet godkännande, så att användaren ser att inget är bokfört ännu.')
   lines.push('- Saknas verktyg för åtgärden (till exempel att skicka annan e-post än fakturautskick, lämna in inkomstdeklaration eller årsredovisning, eller ladda upp en fil åt användaren): säg det i en mening och hänvisa till rätt vy. Påstå aldrig att något är gjort eller förberett utan att ett verktygsanrop gjorde det.')
+  lines.push('- "Hur bokför jag X?", "kan du lägga upp Y?" eller "hur gör jag Z?" med konkreta uppgifter (motpart, belopp, datum, en transaktion eller ett underlag) är ett uppdrag: gör förslaget i stället för att förklara hur man gör. Är frågan allmän, utan något att utföra på: svara kort och erbjud dig att göra det.')
+  lines.push('- Skriv aldrig en instruktion av typen "gå till Bokföring och klicka på ..." för något du kan göra med ett verktyg här. Kortet är vägen, inte en beskrivning av knapparna.')
   lines.push('')
+
+  // Multi-step requests (fork 2026-10-15). "Skapa kunden och fakturera den"
+  // used to end after the customer card with "godkänn den först, sedan skapar
+  // jag fakturan": the invoice needs a customer_id that only exists after
+  // approval. The write tools now take the earlier proposal's operation_id
+  // (params.depends_on, resolved at approval in lib/pending-operations/
+  // dependencies.ts), so every step is staged in the same turn.
+  const multiStep = multiStepLines(intent.tools)
+  if (multiStep.length > 0) {
+    lines.push('# Ärenden i flera steg: lägg fram alla kort i samma tur')
+    lines.push('')
+    lines.push('När ett ärende kräver flera skrivsteg där ett bygger på ett annat, stagea ALLA steg i samma tur, i rätt ordning, så att användaren får alla kort på en gång. Ett senare steg pekar på det tidigare förslaget med dess operation_id:')
+    lines.push(...multiStep)
+    lines.push('- Finns kunden eller leverantören redan (sök med list-verktyget först): använd den befintliga i stället för att skapa en ny.')
+    lines.push('Skriv ALDRIG "godkänn först, så gör jag sedan" eller "när den är godkänd skapar jag ...". Korten godkänns i ordning, och knappen "Godkänn alla" tar dem i rätt ordning. Säg kort att korten väntar på godkännande och i vilken ordning de godkänns.')
+    lines.push('')
+  }
 
   // Files attached in the composer (fork 2026-10-15). They can arrive on any
   // turn, so the rule lives here and not in the first-turn ground rules. Only

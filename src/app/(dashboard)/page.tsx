@@ -21,6 +21,7 @@ import { HemChecklistSection, HemNoticesSection, HemPanesSection } from './hem-s
 import { PageHeader } from '@/components/ui/page-header'
 import { HelpPopover } from '@/components/ui/help-popover'
 import { getTranslations } from 'next-intl/server'
+import { firstNameFromFullName } from '@/lib/user/first-name'
 
 export const dynamic = 'force-dynamic'
 
@@ -156,7 +157,7 @@ export default async function DashboardPage() {
 
   const agentBuilt = Boolean(agentProfile?.verified_at)
   const hasMcpKey = claudeStepDone({ oauthKeyCount })
-  const userFirstName = profile?.full_name?.trim().split(/\s+/)[0] ?? null
+  const userFirstName = firstNameFromFullName(profile?.full_name)
   const initialSetup = {
     path: settings.initial_setup_path ?? null,
     completedAt: settings.initial_setup_completed_at ?? null,

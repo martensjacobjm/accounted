@@ -22,7 +22,7 @@ import { useTranslations } from 'next-intl'
 import { useAssistantAvailable, useCapability } from '@/contexts/CompanyContext'
 import { CAPABILITY } from '@/lib/entitlements/keys'
 import { UpgradeNote } from '@/components/billing/UpgradeNote'
-import ApprovalCard from './ApprovalCard'
+import StagedOperationList from './StagedOperationList'
 import { getErrorMessage as getUserErrorMessage } from '@/lib/errors/get-error-message'
 import type { StoredStagedOperation } from '@/types'
 import type { AgentStatusEvent } from './agent-status'
@@ -1147,33 +1147,7 @@ function MessageBubble({
       )}
 
       {message.staged && message.staged.length > 0 && (
-        <div className="w-full max-w-[85%] space-y-2">
-          {message.staged.map((s) =>
-            s.operation_id ? (
-              // One tool call can stage several operations (batch writers), so
-              // the operation id, not the tool_use_id, keys the card.
-              <ApprovalCard
-                key={s.operation_id}
-                operationId={s.operation_id}
-                riskLevel={s.risk_level}
-                message={s.message}
-                toolName={s.tool_name}
-                operationType={s.operation_type}
-                params={s.params}
-                preview={s.preview}
-                periodStatus={s.period_status}
-                onRequestCorrection={onCorrection}
-              />
-            ) : (
-              <div
-                key={s.tool_use_id}
-                className="rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground"
-              >
-                Förslag stageat men ingen operation-id mottagen. Granska i accounted under <em>Förslag</em>.
-              </div>
-            ),
-          )}
-        </div>
+        <StagedOperationList staged={message.staged} onRequestCorrection={onCorrection} />
       )}
 
       {!isUser && message.text && !streamingTail && (

@@ -4,6 +4,7 @@ import { withRouteContext } from '@/lib/api/with-route-context'
 import { validateBody } from '@/lib/api/validate'
 import { PendingOperationsBulkSchema } from '@/lib/api/schemas'
 import { commitPendingOperation } from '@/lib/pending-operations/commit'
+import { orderByDependencies } from '@/lib/pending-operations/dependencies'
 import { getErrorMessage } from '@/lib/errors/get-error-message'
 import type { PendingOperation } from '@/types'
 
@@ -13,6 +14,9 @@ interface BulkCommitItemResult {
   id: string
   status: 'committed' | 'failed' | 'skipped' | 'rejected'
   error?: string
+  // The executor's result for a committed item (invoice_id, customer_id...),
+  // so the chat's "Godkänn alla" can deep-link each card like a single commit.
+  data?: Record<string, unknown>
 }
 
 // Swedish display labels for already-handled operations; the raw enum values
@@ -48,7 +52,13 @@ export const POST = withRouteContext(
     const opsById = new Map((ops ?? []).map((op) => [op.id, op as PendingOperation]))
     const results: BulkCommitItemResult[] = []
 
-    for (const id of ids) {
+    // Ett förslag som bygger på ett annat i samma urval (fakturan på den nya
+    // kunden) godkänns efter det, oavsett i vilken ordning användaren valde dem.
+    const orderedIds = orderByDependencies(
+      ids.map((id) => ({ id, params: opsById.get(id)?.params ?? null })),
+    ).map((op) => op.id)
+
+    for (const id of orderedIds) {
       const op = opsById.get(id)
       if (!op) {
         results.push({ id, status: 'failed', error: 'Åtgärden kunde inte hittas.' })
@@ -77,7 +87,8 @@ export const POST = withRouteContext(
         actor: { type: 'user', ...(user.email ? { label: user.email } : {}) },
       })
       if (result.status === 'committed') {
-        results.push({ id, status: 'committed' })
+        const data = result.data && Object.keys(result.data).length > 0 ? { data: result.data } : {}
+        results.push({ id, status: 'committed', ...data })
       } else {
         // The executor's error strings mix Swedish user messages with raw
         // Supabase/Zod English: map to Swedish before they land in the

@@ -19,6 +19,7 @@ import {
   type ChatAttachmentRef,
 } from '@/lib/agent/chat/attachment-block'
 import { resolveChatAttachments } from '@/lib/agent/chat/attachments'
+import { resolveUserFirstName } from '@/lib/user/first-name'
 
 // Make sure extensions are loaded: the chat loop dispatches against the
 // agent tool registry which is populated by the mcp-server extension at load.
@@ -234,7 +235,7 @@ export async function POST(request: Request) {
     supabase.from('profiles').select('full_name').eq('id', user.id).single(),
   ])
   const companyName = company?.name ?? ''
-  const firstName = profile?.full_name?.split(' ')[0] ?? null
+  const firstName = resolveUserFirstName(profile?.full_name, user)
 
   // Create the conversation row when this is a fresh thread.
   if (!conversationId) {

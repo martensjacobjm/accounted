@@ -693,10 +693,42 @@ function PreviewKonteringTable({ lines }: { lines: PreviewKonteringLine[] }) {
   )
 }
 
+const GENERIC_HIDDEN_KEYS: ReadonlySet<string> = new Set(['period_status', 'depends_on', 'vat_note'])
+
+// Ett förslag som bygger på ett annat (params.depends_on, se
+// lib/pending-operations/dependencies.ts) visar vilket, så att godkännaren ser
+// ordningen: kunden före fakturan, leverantören före leverantörsfakturan.
+function dependencyTitles(data: Record<string, unknown>): string[] {
+  const raw = data.depends_on
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((d) => (d && typeof d === 'object' ? (d as { title?: unknown }).title : null))
+    .filter((t): t is string => typeof t === 'string' && t.length > 0)
+}
+
+function DependencyNotice({ data }: { data: Record<string, unknown> }) {
+  const titles = dependencyTitles(data)
+  const vatNote = typeof data.vat_note === 'string' ? data.vat_note : null
+  if (titles.length === 0 && !vatNote) return null
+  return (
+    <div className="space-y-1 text-xs text-muted-foreground">
+      {titles.length > 0 && (
+        <p>
+          Bygger på: <span className="font-medium text-foreground">{titles.join(', ')}</span>. Godkänns efter det.
+        </p>
+      )}
+      {vatNote && <p>{vatNote}</p>}
+    </div>
+  )
+}
+
 function GenericPreview({ data }: { data: Record<string, unknown> }) {
   // Skip period_status here: it's surfaced in the dedicated banner, not the
   // generic key-value dump (otherwise the approver sees the same fact twice).
-  const entries = Object.entries(data).filter(([k, v]) => v != null && v !== '' && k !== 'period_status')
+  // depends_on and vat_note are rendered by OperationPreview above every body.
+  const entries = Object.entries(data).filter(
+    ([k, v]) => v != null && v !== '' && !GENERIC_HIDDEN_KEYS.has(k),
+  )
   const konteringEntries = entries.filter(([, v]) => isKonteringLines(v))
   const rest = entries.filter(([, v]) => !isKonteringLines(v))
   return (
@@ -747,5 +779,11 @@ export function OperationPreview({ op }: { op: OperationPreviewInput }) {
         return <GenericPreview data={op.preview_data} />
     }
   })()
-  return body
+  if (dependencyTitles(op.preview_data).length === 0 && typeof op.preview_data.vat_note !== 'string') return body
+  return (
+    <div className="space-y-2">
+      <DependencyNotice data={op.preview_data} />
+      {body}
+    </div>
+  )
 }

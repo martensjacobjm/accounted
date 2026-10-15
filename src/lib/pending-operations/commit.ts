@@ -49,6 +49,7 @@ import {
   maskStoredCustomerPersonalNumber,
 } from '@/lib/customers/protect-personal-number'
 import { resolveDefaultPaymentTerms } from '@/lib/customers/default-payment-terms'
+import { resolveOperationDependencies } from '@/lib/pending-operations/dependencies'
 import {
   normalizeVatRateToDecimal,
   normalizeVatRateToFraction,
@@ -7617,7 +7618,22 @@ export async function commitPendingOperation(
   pendingOp: PendingOperation,
   opts: CommitOptions = {}
 ): Promise<CommitResult> {
-  const run = () => commitPendingOperationInner(supabase, userId, companyId, pendingOp, opts)
+  // Förslag som bygger på ett annat förslag (params.depends_on, se
+  // dependencies.ts) får sina värden här, före claim: ett beroende som inte är
+  // godkänt lämnar förslaget pending så att det kan godkännas i rätt ordning.
+  // Utan depends_on görs inget databasanrop och params går vidare oförändrade.
+  const deps = await resolveOperationDependencies(supabase, companyId, pendingOp.params ?? {})
+  if (!deps.ok) {
+    return {
+      status: 'failed',
+      error: deps.message,
+      http_status: deps.httpStatus,
+      code: deps.code,
+      operation_status: 'pending',
+    }
+  }
+  const resolvedOp = deps.params === pendingOp.params ? pendingOp : { ...pendingOp, params: deps.params }
+  const run = () => commitPendingOperationInner(supabase, userId, companyId, resolvedOp, opts)
   return opts.actor ? runWithActor(opts.actor, run) : run()
 }
 

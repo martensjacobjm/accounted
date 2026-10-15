@@ -418,6 +418,14 @@ import { getUserCompanies } from '@/lib/company/context'
 // ensureInitialized() is called by the extension router (ext/[...path]/route.ts)
 // which dispatches to this handler: no duplicate call needed here.
 import { CURRENCIES } from '@/types'
+import {
+  dependencyFields,
+  resolveAccountOperationArgs,
+  resolveInvoiceCustomerArg,
+  resolveInvoiceOperationArg,
+  resolveSupplierOperationArg,
+  type InvoiceCustomer,
+} from './staged-dependency-args'
 import type { Transaction, TransactionCategory, EntityType, VatTreatment, Invoice, Currency, CompanySettings, Customer, InvoiceItem, PendingOperation, VatPeriodType, VatDeclarationRutor, YearEndBlockerCode, SalesOrder, SalesOrderItem, SalesOrderStatus } from '@/types'
 
 // ── Actor context ────────────────────────────────────────────
@@ -464,6 +472,24 @@ type InvoiceLineArticle = {
   revenue_account: string | null
   currency: string | null
   active: boolean
+}
+
+/** Kundraden som gnubok_create_invoice räknar moms mot (full rad, samma regler som webben). */
+async function loadInvoiceCustomer(
+  supabase: SupabaseClient,
+  companyId: string,
+  customerId: string,
+): Promise<InvoiceCustomer> {
+  const { data: customer, error } = await supabase
+    .from('customers')
+    .select('*')
+    .eq('id', customerId)
+    .eq('company_id', companyId)
+    .single()
+  if (error || !customer) {
+    throw new Error('Customer not found. Use gnubok_list_customers to find valid IDs.')
+  }
+  return customer as InvoiceCustomer
 }
 
 /**
@@ -7090,7 +7116,7 @@ export const tools: McpTool[] = [
         preview,
         actor,
         {
-          description: 'Once approved, you can invoice this customer with gnubok_create_invoice using the returned customer_id.',
+          description: 'To invoice this customer in the same request, stage gnubok_create_invoice now with customer_operation_id set to this operation_id; do not wait for approval. It approves after the customer.',
           tool: 'gnubok_create_invoice',
         },
         {
@@ -7810,6 +7836,10 @@ export const tools: McpTool[] = [
       additionalProperties: false,
       properties: {
         customer_id: { type: 'string', description: 'Customer UUID' },
+        customer_operation_id: {
+          type: 'string',
+          description: 'Instead of customer_id: operation_id of a staged gnubok_create_customer. Stage now.',
+        },
         document_type: {
           type: 'string',
           enum: ['invoice', 'quote'],
@@ -7829,7 +7859,7 @@ export const tools: McpTool[] = [
               vat_rate: { type: 'number', description: 'VAT rate 0-100 (optional override)' },
               article_id: {
                 type: 'string',
-                description: 'Optional article UUID from gnubok_list_articles. Prefills description, unit, unit_price, revenue account and, only when compatible with the customer VAT rules, vat_rate. Values set on the line win.',
+                description: 'Optional article UUID (gnubok_list_articles): prefills the line, vat_rate only when the customer VAT rules allow. Values set on the line win.',
               },
               line_type: { type: 'string', enum: ['product', 'text'], description: 'text = free-text row: no amounts, never books.' },
               revenue_account: { type: ['string', 'null'], description: 'BAS class 1-3 posting-account override.' },
@@ -7846,7 +7876,7 @@ export const tools: McpTool[] = [
         default_dimensions: {
           type: 'object',
           additionalProperties: { type: 'string' },
-          description: 'Dims bag keyed by SIE dim no, value = code OR name, e.g. {"1":"KS01","6":"Villa Almgren"}. Applied to every item not setting the key. Unknown values rejected: never auto-created.',
+          description: 'Dims bag {sie_dim_no: code or name} for every item not setting the key. Unknown values rejected, never created.',
         },
         invoice_date: { type: 'string', description: 'YYYY-MM-DD (default today)' },
         due_date: { type: 'string', description: 'YYYY-MM-DD (default from payment terms)' },
@@ -7860,14 +7890,19 @@ export const tools: McpTool[] = [
           description: 'Optional https pay link for THIS invoice (e.g. Stripe); rendered in the invoice email and PDF.',
         },
       },
-      required: ['customer_id', 'items'],
+      required: ['items'],
     },
     annotations: ANNOTATIONS_STAGED_WRITE,
     async execute(args, companyId, userId, supabase, actor) {
-      const customerId = args.customer_id as string
+      // Kunden kan vara ett stagat create_customer i samma ärende: då stagas
+      // fakturan direkt med depends_on och får sitt customer_id vid godkännandet.
+      const stagedCustomer = await resolveInvoiceCustomerArg(supabase, companyId, args)
+      const customerId = stagedCustomer ? stagedCustomer.customerId : (args.customer_id as string)
       const rawItems = args.items as StagedInvoiceLineInput[]
 
-      if (!customerId) throw new Error('customer_id is required. Use gnubok_list_customers to find IDs.')
+      if (!customerId && !stagedCustomer) {
+        throw new Error('customer_id or customer_operation_id is required. Use gnubok_list_customers to find IDs, or stage the customer with gnubok_create_customer and pass its operation_id.')
+      }
       if (!rawItems?.length) throw new Error('At least one item is required.')
 
       const today = new Date().toISOString().split('T')[0]
@@ -7898,16 +7933,10 @@ export const tools: McpTool[] = [
       // Fetch customer (full row for VAT rules) BEFORE the article prefill:
       // an article's stored rate may only be adopted against this customer's
       // default rate set (see resolveInvoiceLineFromArticle).
-      const { data: customer, error: custError } = await supabase
-        .from('customers')
-        .select('*')
-        .eq('id', customerId)
-        .eq('company_id', companyId)
-        .single()
-
-      if (custError || !customer) {
-        throw new Error('Customer not found. Use gnubok_list_customers to find valid IDs.')
-      }
+      const customer = customerId
+        ? await loadInvoiceCustomer(supabase, companyId, customerId)
+        : stagedCustomer!.customer
+      const customerDependency = dependencyFields(stagedCustomer?.dependency ?? { dependsOn: [], preview: [] })
 
       // VAT rules from customer type (same logic as web UI)
       const vatRules = getVatRules(customer.customer_type, customer.vat_number_validated, customer.country)
@@ -8038,6 +8067,7 @@ export const tools: McpTool[] = [
         `${isQuote ? 'Ny offert' : 'Ny faktura'}: ${customer.name} ${roundOre(total)} ${currency}`,
         {
           customer_id: customerId,
+          ...customerDependency.params,
           document_type: documentType,
           ...(isQuote ? { valid_until: validUntil } : {}),
           items: stagedItems,
@@ -8082,6 +8112,8 @@ export const tools: McpTool[] = [
           // select) so the agent can verify what a name attached to.
           ...(dimensionResolutions.length > 0 ? { dimension_resolutions: dimensionResolutions } : {}),
           ...(vatWarnings.length > 0 ? { vat_warnings: vatWarnings } : {}),
+          ...customerDependency.preview,
+          ...(stagedCustomer?.vatNote ? { vat_note: stagedCustomer.vatNote } : {}),
         },
         actor,
         isQuote
@@ -8090,7 +8122,7 @@ export const tools: McpTool[] = [
               tool: 'gnubok_convert_invoice',
             }
           : {
-              description: 'Once approved, the invoice is created as a draft. Send it with gnubok_send_invoice or use gnubok_mark_invoice_as_sent if delivered outside the system.',
+              description: 'Approval creates a draft. To also email it in the same request, stage gnubok_send_invoice now with invoice_operation_id set to this operation_id; it approves after the invoice.',
               tool: 'gnubok_send_invoice',
             },
         vatWarningsStageOptions(vatWarnings),
@@ -9190,19 +9222,46 @@ export const tools: McpTool[] = [
       additionalProperties: false,
       properties: {
         invoice_id: { type: 'string', description: 'UUID of the invoice to send' },
+        invoice_operation_id: {
+          type: 'string',
+          description: 'Instead of invoice_id: operation_id of a staged gnubok_create_invoice. Stage now.',
+        },
       },
-      required: ['invoice_id'],
     },
     outputSchema: STAGED_OPERATION_SCHEMA,
     annotations: ANNOTATIONS_WRITE_OPEN_WORLD,
     async execute(args, companyId, userId, supabase, actor) {
-      const invoiceId = args.invoice_id as string
-      if (!invoiceId) throw new Error('invoice_id is required')
-
       const emailService = getEmailService()
       if (!emailService.isConfigured()) {
         throw new Error('Email service not configured. Ensure RESEND_API_KEY and RESEND_FROM_EMAIL are set (or SMTP_HOST and SMTP_FROM_EMAIL with EMAIL_PROVIDER=smtp).')
       }
+
+      // Fakturan kan vara ett stagat create_invoice i samma ärende: då stagas
+      // utskicket direkt och får sitt invoice_id när fakturan godkänns.
+      const stagedInvoice = await resolveInvoiceOperationArg(supabase, companyId, args)
+      if (stagedInvoice && !stagedInvoice.invoiceId) {
+        if (!stagedInvoice.customerEmail) throw new Error('Customer has no email address. Update customer details first.')
+        const dependency = dependencyFields(stagedInvoice.dependency)
+        return stagePendingOperation(supabase, companyId, userId, 'send_invoice',
+          `Skicka: ny faktura till ${stagedInvoice.customerEmail}`,
+          { invoice_id: null, ...dependency.params },
+          {
+            invoice_number: null,
+            customer_name: stagedInvoice.customerName,
+            customer_email: stagedInvoice.customerEmail,
+            total: stagedInvoice.total,
+            currency: stagedInvoice.currency,
+            ...dependency.preview,
+          },
+          actor,
+          {
+            description: 'After the customer pays, mark the invoice paid via gnubok_mark_invoice_as_paid (or match it to the inbound bank transaction with gnubok_match_transaction_to_invoice).',
+            tool: 'gnubok_mark_invoice_as_paid',
+          },
+        )
+      }
+      const invoiceId = stagedInvoice?.invoiceId ?? (args.invoice_id as string)
+      if (!invoiceId) throw new Error('invoice_id or invoice_operation_id is required')
 
       const invoice = await fetchInvoiceWithCustomer(supabase, companyId, invoiceId)
 
@@ -9635,7 +9694,7 @@ export const tools: McpTool[] = [
         params,
         actor,
         {
-          description: 'Once approved, you can book supplier invoices against this supplier with gnubok_create_supplier_invoice_from_inbox using the returned supplier_id.',
+          description: 'To book an inbox invoice from this supplier in the same request, stage gnubok_create_supplier_invoice_from_inbox now with supplier_operation_id set to this operation_id; do not wait for approval.',
           tool: 'gnubok_create_supplier_invoice_from_inbox',
         },
         {
@@ -10201,7 +10260,7 @@ export const tools: McpTool[] = [
         { ...params, source: ref ? 'bas_2026' : 'custom' },
         actor,
         {
-          description: 'Once approved, the account is active and bookable via gnubok_create_voucher, gnubok_bulk_book_transactions, or gnubok_categorize_transaction with account_override.',
+          description: 'To book on this account in the same request, stage gnubok_create_voucher now with account_operation_ids containing this operation_id; do not wait for approval. Once approved, the account is also bookable via categorize and bulk booking.',
           tool: 'gnubok_list_accounts',
         },
         {
@@ -14483,13 +14542,17 @@ export const tools: McpTool[] = [
       properties: {
         inbox_item_id: { type: 'string', description: 'UUID of the inbox item to convert' },
         supplier_id_override: { type: 'string', description: 'Force this supplier UUID instead of the matched/extracted one' },
+        supplier_operation_id: {
+          type: 'string',
+          description: 'Instead of supplier_id_override: operation_id of a staged gnubok_create_supplier. Stage now.',
+        },
         vat_treatment_override: { type: 'string', enum: ['standard_25', 'reduced_12', 'reduced_6', 'reverse_charge', 'export', 'exempt'], description: 'Override extracted VAT treatment' },
         invoice_date_override: { type: 'string', description: 'Override extracted invoice date (YYYY-MM-DD). Use when OCR misses the date.' },
         due_date_override: { type: 'string', description: 'Override extracted due date (YYYY-MM-DD)' },
         exchange_rate_override: { type: 'number', description: 'SEK per 1 unit of invoice currency; skips the Riksbanken lookup.' },
         line_overrides: {
           type: 'array',
-          description: 'Per-line overrides (1-based line_number): account_number wins over accountSuggestion and supplier default; dimensions tags that line; apply_slp books särskild löneskatt on a 741x pension line.',
+          description: 'Per-line overrides (1-based line_number): account_number wins over accountSuggestion and supplier default; dimensions tags that line.',
           items: {
             type: 'object',
             additionalProperties: false,
@@ -14498,7 +14561,7 @@ export const tools: McpTool[] = [
               account_number: { type: 'string', description: 'BAS account number for this line (e.g. "6420")' },
               apply_slp: {
                 type: 'boolean',
-                description: 'Book särskild löneskatt (24.26%, 7533 D / 2514 K) for this line at commit. Only valid when the line resolves to a 741x pension-premium account (tjänstepension); any other account is rejected at staging.',
+                description: 'Book särskild löneskatt (24.26%, 7533 D / 2514 K) on this 741x tjänstepension line at commit; other accounts are rejected.',
               },
               dimensions: {
                 type: 'object',
@@ -14512,7 +14575,7 @@ export const tools: McpTool[] = [
         default_dimensions: {
           type: 'object',
           additionalProperties: { type: 'string' },
-          description: 'Dims bag keyed by SIE dim no, value = code OR name, e.g. {"1":"KS01","6":"Villa Almgren"}. Applied to every line not setting the key. Unknown values rejected: never auto-created.',
+          description: 'Dims bag {sie_dim_no: code or name} for every line not setting the key. Unknown values rejected, never created.',
         },
         notes: { type: 'string', description: 'Optional notes appended to the supplier invoice' },
         dry_run: { type: 'boolean', description: 'If true, return the assembled payload without staging (default false)' },
@@ -14549,8 +14612,9 @@ export const tools: McpTool[] = [
       const totalsExt = extracted.totals as Record<string, unknown> | undefined
       const lineItemsExt = (extracted.lineItems as Array<Record<string, unknown>> | undefined) ?? []
 
-      // Resolve supplier: explicit override > matched > org_number > VAT number > name
-      const supplierIdOverride = args.supplier_id_override as string | undefined
+      // Resolve supplier: staged create_supplier > explicit override > matched > org_number > VAT number > name
+      const stagedSupplier = await resolveSupplierOperationArg(supabase, companyId, args)
+      const supplierIdOverride = stagedSupplier?.supplierId ?? (args.supplier_id_override as string | undefined)
       let supplierId: string | null = supplierIdOverride ?? (inbox.matched_supplier_id as string | null) ?? null
       let supplierResolution:
         | 'override'
@@ -14558,12 +14622,14 @@ export const tools: McpTool[] = [
         | 'lookup_org_number'
         | 'lookup_vat_number'
         | 'lookup_name'
+        | 'pending_operation'
         | 'unresolved' =
-        supplierIdOverride ? 'override' : inbox.matched_supplier_id ? 'matched' : 'unresolved'
+        stagedSupplier ? 'pending_operation' : supplierIdOverride ? 'override' : inbox.matched_supplier_id ? 'matched' : 'unresolved'
+      const supplierDependency = dependencyFields(stagedSupplier?.dependency ?? { dependsOn: [], preview: [] })
 
       const supplierIdentity = supplierIdentityFrom(supplierExt)
 
-      if (!supplierId) {
+      if (!supplierId && !stagedSupplier) {
         const match = await matchSupplierByIdentity(supabase, companyId, supplierIdentity)
         if (match) {
           supplierId = match.supplierId
@@ -14576,7 +14642,7 @@ export const tools: McpTool[] = [
         }
       }
 
-      if (!supplierId) {
+      if (!supplierId && !stagedSupplier) {
         // Structured resolution failure instead of a dead end: a thrown error
         // here stops the whole inbox pipeline for small ad hoc vendors. Return
         // staged:false with near-miss candidates the agent can pass as
@@ -14609,8 +14675,8 @@ export const tools: McpTool[] = [
           risk_level: getRiskLevel('create_supplier_invoice_from_inbox'),
           actor: actor ?? { type: 'user' },
           message: (best
-            ? `Could not resolve supplier "${extractedName ?? 'unknown'}" exactly: ${candidates.length} near-miss candidate(s) in preview.candidates. Verify against the underlag, then retry with supplier_id_override; or create the supplier first.`
-            : `Could not resolve supplier "${extractedName ?? 'unknown'}" (org: ${extractedOrg ?? 'unknown'}) and no similar supplier exists. Create it with gnubok_create_supplier, then retry with supplier_id_override.`)
+            ? `Could not resolve supplier "${extractedName ?? 'unknown'}" exactly: ${candidates.length} near-miss candidate(s) in preview.candidates. Verify against the underlag, then retry with supplier_id_override; or stage gnubok_create_supplier and retry at once with supplier_operation_id.`
+            : `Could not resolve supplier "${extractedName ?? 'unknown'}" (org: ${extractedOrg ?? 'unknown'}) and no similar supplier exists. Stage it with gnubok_create_supplier, then retry this tool at once with supplier_operation_id set to its operation_id (no need to wait for approval).`)
             + (poolTruncated ? ` Note: candidate search covered only the first ${CANDIDATE_POOL_CAP} suppliers: the pool was truncated.` : ''),
           preview: {
             supplier_resolution: 'unresolved',
@@ -14630,7 +14696,7 @@ export const tools: McpTool[] = [
               }
             : {
                 description:
-                  'Create the supplier, approve it, then retry this tool with supplier_id_override set to the new supplier id.',
+                  'Stage the supplier with gnubok_create_supplier, then retry this tool in the same turn with supplier_operation_id set to its operation_id. Both cards are approved in order.',
                 tool: 'gnubok_create_supplier',
                 args: {
                   ...(extractedName ? { name: extractedName } : {}),
@@ -14646,12 +14712,22 @@ export const tools: McpTool[] = [
       // especially supplier_id_override, which the unresolved next-hint now
       // actively promotes) must point at a supplier in THIS company, or the
       // staged operation would fail opaquely at commit time instead.
-      const { data: resolvedSupplier } = await supabase
-        .from('suppliers')
-        .select('id, default_expense_account, default_payment_terms')
-        .eq('id', supplierId)
-        .eq('company_id', companyId)
-        .single()
+      // A supplier still pending approval has no row yet: its defaults come
+      // from the staged create_supplier params instead.
+      const { data: resolvedSupplier } = supplierId
+        ? await supabase
+            .from('suppliers')
+            .select('id, default_expense_account, default_payment_terms')
+            .eq('id', supplierId)
+            .eq('company_id', companyId)
+            .single()
+        : {
+            data: {
+              id: null,
+              default_expense_account: stagedSupplier?.defaultExpenseAccount ?? null,
+              default_payment_terms: stagedSupplier?.defaultPaymentTerms ?? null,
+            },
+          }
       if (!resolvedSupplier) {
         throw new Error(
           supplierResolution === 'override'
@@ -14672,7 +14748,9 @@ export const tools: McpTool[] = [
       // The scan read the supplier's giro or IBAN with everything else: a
       // supplier that lacks them takes them now, so the staged invoice can
       // go into a betalfil once approved. A write, so never on a dry run.
-      if (!dryRun) {
+      // A pending supplier has no row to backfill: pass the giro to
+      // gnubok_create_supplier instead.
+      if (!dryRun && supplierId) {
         await backfillSupplierPaymentDetails(supabase, companyId, supplierId, supplierExt as SupplierPaymentDetails | null)
       }
 
@@ -14961,6 +15039,7 @@ export const tools: McpTool[] = [
       const params = {
         inbox_item_id: inboxItemId,
         supplier_id: supplierId,
+        ...supplierDependency.params,
         document_id: inbox.document_id,
         supplier_invoice_number: supplierInvoiceNumber,
         invoice_date: invoiceDate,
@@ -14982,6 +15061,7 @@ export const tools: McpTool[] = [
         inbox_item_id: inboxItemId,
         supplier_id: supplierId,
         supplier_resolution: supplierResolution,
+        ...supplierDependency.preview,
         extracted_supplier_name: supplierIdentity.name,
         extracted_org_number: supplierIdentity.orgNumber,
         extracted_vat_number: supplierIdentity.vatNumber,
@@ -21142,10 +21222,15 @@ export const tools: McpTool[] = [
         default_dimensions: {
           type: 'object',
           additionalProperties: { type: 'string' },
-          description: 'Dimension tags {sie_dim_no: kod eller namn}, e.g. {"6":"P001"}, applied to every line not setting the key itself. Unknown values are rejected: never auto-created.',
+          description: 'Dimension tags {sie_dim_no: kod eller namn} for every line not setting the key. Unknown values rejected, never created.',
         },
         is_opening_balance: { type: 'boolean', description: 'Set true ONLY for a migrated ingående balans (IB). Marks the entry source_type=opening_balance so bank reconciliation excludes it from period movement. Requires every line to be a balance-sheet account (class 1/2) and entry_date = fiscal period start, else rejected. Defaults false.' },
-        inbox_item_id: { type: 'string', description: 'Inbox item UUID to book directly. For a received handling this is the BFL 5 kap 6§ path: the document becomes the verifikation. On confirm the item and its document link to the new verifikat. Not in inbox? gnubok_upload_document first. Fails if already booked/converted.' },
+        inbox_item_id: { type: 'string', description: 'Inbox item UUID to book directly; on confirm it and its document link to the new verifikat. Not in inbox? gnubok_upload_document first. Fails if already booked/converted.' },
+        account_operation_ids: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'operation_ids of staged gnubok_create_account the lines use. Stage now.',
+        },
         lines: {
           type: 'array',
           description: 'At least 2 balanced lines. sum(debit_amount) === sum(credit_amount), both > 0.',
@@ -21159,7 +21244,7 @@ export const tools: McpTool[] = [
               currency: { type: 'string', description: 'ISO 4217, defaults to SEK' },
               amount_in_currency: { type: 'number', description: 'Original amount if currency is not SEK' },
               exchange_rate: { type: 'number' },
-              tax_code: { type: 'string', description: 'Free-text tag: does NOT drive momsdeklaration ruta mapping. The BAS account number is what determines which ruta the line lands in (e.g. 2641 → ruta 48, 2614 → ruta 30). Pick the correct account first.' },
+              tax_code: { type: 'string', description: 'Free-text tag only: the BAS account decides the momsdeklaration ruta (e.g. 2641 → ruta 48, 2614 → ruta 30).' },
               dimensions: {
                 type: 'object',
                 additionalProperties: { type: 'string' },
@@ -21307,6 +21392,13 @@ export const tools: McpTool[] = [
           active: Boolean(a.is_active),
         })
       }
+      // Accounts staged with gnubok_create_account in the same request count
+      // as known; depends_on keeps the voucher from approving before them.
+      const stagedAccounts = await resolveAccountOperationArgs(supabase, companyId, args)
+      for (const a of stagedAccounts.accounts) {
+        if (!accountInfo.has(a.account_number)) accountInfo.set(a.account_number, { name: a.account_name, active: true })
+      }
+      const accountDependency = dependencyFields(stagedAccounts.dependency)
       const unknownAccounts = accountNumbers.filter((n) => !accountInfo.has(n))
       const unseedableAccounts = unknownAccounts.filter((n) => !getBASReference(n))
       const seedableAccounts = unknownAccounts.filter((n) => Boolean(getBASReference(n)))
@@ -21409,6 +21501,7 @@ export const tools: McpTool[] = [
           inbox_item_id: inboxItemId,
           document_id: inboxDocumentId,
           lines,
+          ...accountDependency.params,
         },
         {
           entry_date: entryDate,
@@ -21422,6 +21515,7 @@ export const tools: McpTool[] = [
           // BAS accounts not yet in the chart: the engine activates them at
           // commit. Surfaced so the approver sees the side-effect up front.
           ...(seedableAccounts.length > 0 ? { will_activate_accounts: seedableAccounts } : {}),
+          ...accountDependency.preview,
           // Echoed for every non-exact dimension resolution (resolve-don't-
           // select) so the agent can verify what a name attached to.
           ...(dimensionResolutions.length > 0 ? { dimension_resolutions: dimensionResolutions } : {}),

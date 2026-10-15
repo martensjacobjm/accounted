@@ -248,9 +248,118 @@ const READ_FIXTURES: Record<string, unknown> = {
   },
   gnubok_list_assets: { assets: [] },
   gnubok_list_articles: { articles: [] },
+  // Every company has a chart of accounts and a bank account; an empty list
+  // here made the model refuse "vilket konto är företagskontot".
+  gnubok_list_cash_accounts: {
+    cash_accounts: [{ cash_account_id: 'ca-1', name: 'Företagskonto', ledger_account: '1930', currency: 'SEK', is_primary: true, balance_booked: 84250 }],
+  },
+  gnubok_list_accounts: {
+    accounts: [
+      ['1510', 'Kundfordringar'],
+      ['1930', 'Företagskonto'],
+      ['2440', 'Leverantörsskulder'],
+      ['2611', 'Utgående moms på försäljning inom Sverige, 25 %'],
+      ['2641', 'Debiterad ingående moms'],
+      ['2890', 'Övriga kortfristiga skulder'],
+      ['3001', 'Försäljning inom Sverige, 25 % moms'],
+      ['4010', 'Inköp av handelsvaror i Sverige'],
+      ['5410', 'Förbrukningsinventarier'],
+      ['5460', 'Förbrukningsmaterial'],
+      ['5611', 'Drivmedel för personbilar, mc, m.m.'],
+      ['6071', 'Representation, avdragsgill'],
+      ['6110', 'Kontorsmateriel'],
+    ].map(([account_number, account_name]) => ({ account_number, account_name, is_active: true })),
+  },
+  // A posted verifikat on the wrong account, for the "rätta" case.
+  gnubok_query_journal: {
+    lines: [
+      { journal_entry_id: '00000000-0000-4000-8000-00000000e012', voucher: 'A-12', entry_date: '2026-10-03', description: 'Clas Ohlson', account_number: '6110', account_name: 'Kontorsmateriel', debit_amount: 1600, credit_amount: 0, status: 'posted' },
+      { journal_entry_id: '00000000-0000-4000-8000-00000000e012', voucher: 'A-12', entry_date: '2026-10-03', description: 'Clas Ohlson', account_number: '2641', account_name: 'Debiterad ingående moms', debit_amount: 400, credit_amount: 0, status: 'posted' },
+      { journal_entry_id: '00000000-0000-4000-8000-00000000e012', voucher: 'A-12', entry_date: '2026-10-03', description: 'Clas Ohlson', account_number: '1930', account_name: 'Företagskonto', debit_amount: 0, credit_amount: 2000, status: 'posted' },
+    ],
+    totals: { debit: 2000, credit: 2000, line_count: 3 },
+  },
+  gnubok_get_vat_report: {
+    period: { start: '2026-07-01', end: '2026-09-30' },
+    rutor: { ruta05: 480000, ruta10: 120000, ruta48: 31500, ruta49: 88500 },
+    ruta49: 88500,
+  },
+  gnubok_get_income_statement: {
+    period: { start: '2026-01-01', end: '2026-10-15' },
+    total_revenue: 1840000,
+    total_expenses: 1515000,
+    net_result: 325000,
+  },
+  gnubok_year_end_readiness: {
+    ready: false,
+    blockers: [{ code: 'UNCATEGORIZED_TRANSACTIONS', message: '1 banktransaktion är inte bokförd' }],
+    warnings: [{ code: 'NO_DEPRECIATION', message: 'Avskrivningar för året är inte bokförda' }],
+  },
 }
 
 let stagedCounter = 0
+
+// Operation ids are UUIDs, as in production: the *_operation_id arguments
+// (customer_operation_id and friends) refuse anything else.
+function evalOperationId(n: number): string {
+  return `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
+}
+
+// What each eval write staged, by operation_id, so a later step in the same
+// turn can be checked against a real earlier proposal like the server does.
+const stagedOps = new Map<string, string>()
+
+const KNOWN_CUSTOMER_IDS = new Set(['cu-1'])
+
+function refersToStaged(input: Record<string, unknown>, field: string, operationType: string): boolean {
+  const ref = input[field]
+  return typeof ref === 'string' && stagedOps.get(ref) === operationType
+}
+
+/**
+ * The few staging-time refusals that decide whether a multi-step request can
+ * be staged in one turn. They mirror the real tools: a made-up customer_id is
+ * "Customer not found", and an *_operation_id must name an earlier proposal of
+ * the right kind. Anything else stages.
+ */
+function stagingRefusal(name: string, input: Record<string, unknown>): string | null {
+  if (name === 'gnubok_create_invoice') {
+    if (input.customer_operation_id !== undefined) {
+      return refersToStaged(input, 'customer_operation_id', 'gnubok_create_customer')
+        ? null
+        : 'customer_operation_id must be the operation_id (UUID) that create_customer returned when it staged.'
+    }
+    return KNOWN_CUSTOMER_IDS.has(String(input.customer_id ?? ''))
+      ? null
+      : 'Customer not found. Use gnubok_list_customers to find valid IDs.'
+  }
+  if (name === 'gnubok_send_invoice' && input.invoice_operation_id !== undefined) {
+    return refersToStaged(input, 'invoice_operation_id', 'gnubok_create_invoice')
+      ? null
+      : 'invoice_operation_id must be the operation_id (UUID) that create_invoice returned when it staged.'
+  }
+  if (name === 'gnubok_create_supplier_invoice_from_inbox' && input.supplier_operation_id !== undefined) {
+    return refersToStaged(input, 'supplier_operation_id', 'gnubok_create_supplier')
+      ? null
+      : 'supplier_operation_id must be the operation_id (UUID) that create_supplier returned when it staged.'
+  }
+  return null
+}
+
+/** The real tool's answer when the inbox supplier is unknown and no supplier was given. */
+function unresolvedSupplier(input: Record<string, unknown>) {
+  if (input.supplier_operation_id !== undefined || input.supplier_id_override !== undefined) return null
+  const item = INBOX_ITEMS[String(input.inbox_item_id ?? '')]
+  if (!item || item.matched_supplier_id) return null
+  const supplier = (item.extracted_data as { supplier: { name: string; orgNumber: string | null } }).supplier
+  return {
+    staged: false,
+    risk_level: 'medium',
+    actor: { type: 'agent_chat' },
+    message: `Could not resolve supplier "${supplier.name}" (org: ${supplier.orgNumber ?? 'unknown'}) and no similar supplier exists. Stage it with gnubok_create_supplier, then retry this tool at once with supplier_operation_id set to its operation_id (no need to wait for approval).`,
+    preview: { supplier_resolution: 'unresolved', candidates: [] },
+  }
+}
 
 function isReadOnly(tool: AgentTool): boolean {
   return (tool as { annotations?: { readOnlyHint?: boolean } }).annotations?.readOnlyHint === true
@@ -280,10 +389,16 @@ export function stubTool(real: AgentTool, atoms: AtomRow[]): AgentTool {
         if (typeof fixture === 'function') return (fixture as (i: Record<string, unknown>) => unknown)(input)
         return fixture ?? { items: [], note: 'Inga poster i testdatan.' }
       }
+      const unresolved = real.name === 'gnubok_create_supplier_invoice_from_inbox' ? unresolvedSupplier(input) : null
+      if (unresolved) return unresolved
+      const refusal = stagingRefusal(real.name, input)
+      if (refusal) throw new Error(refusal)
       stagedCounter += 1
+      const operationId = evalOperationId(stagedCounter)
+      stagedOps.set(operationId, real.name)
       return {
         staged: true,
-        operation_id: `op-eval-${real.name}-${stagedCounter}`,
+        operation_id: operationId,
         risk_level: 'medium',
         actor: { type: 'agent_chat' },
         message: 'Förslaget är skapat och väntar på användarens godkännande.',

@@ -77,7 +77,10 @@ of reverse charge. Re-validate by updating the customer once VIES is back.
 })\`
 
 Stages a pending operation for user approval. After approval, the customer
-appears in \`gnubok_list_customers\` and can be invoiced via \`gnubok_create_invoice\`.
+appears in \`gnubok_list_customers\`. To invoice the new customer in the same
+request, stage \`gnubok_create_invoice\` right away with \`customer_operation_id\`
+set to the customer's \`operation_id\`: it approves after the customer, so do not
+wait for the approval first.
 
 ### Step 5: Sanity-check before first invoice
 
@@ -94,7 +97,7 @@ rate, and check the customer_type while you are there.
 
 - *A validated \`eu_business\` invoiced at 25 %*: not refused, but almost always wrong. Reverse charge is the DEFAULT for a validated EU VAT number: leave \`vat_rate\` off (or 0) and Accounted adds the "Omvänd betalningsskyldighet" notation automatically. A Swedish rate is lawful here only for a supply taxed where it is performed (hotel/restaurang 12 %, persontransport and event admission 6 %, fastighetstjänst and korttidsuthyrning 25 %); read the \`Accounted://settings/vat-treatments\` resource before using one.
 - *A \`swedish_business\` invoiced at 0 %*: also accepted (momsfritt supplies exist), but the normal domestic rate is 25/12/6 %. Do not use 0 % to avoid picking a rate.
-- *"Customer not found"* on \`gnubok_create_invoice\`: the customer wasn't created (or its pending_operation wasn't approved). Run \`gnubok_list_customers\` to confirm.
+- *"Customer not found"* on \`gnubok_create_invoice\`: the customer wasn't created (or its pending_operation wasn't approved). Run \`gnubok_list_customers\` to confirm, or pass \`customer_operation_id\` to build on the pending customer.
 
 ## ROT/RUT-eligible customers (Swedish individuals)
 

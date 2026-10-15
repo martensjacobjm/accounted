@@ -563,6 +563,13 @@ describe('tools/list payload size guard', () => {
     //     defaults for two of four forms; it now says only that the default
     //     follows the form and the preview flags it. Measured 63 493.
     //     Ceiling unchanged.
+    //   * Dependent proposals (fork bok.dalavs.se): customer_operation_id,
+    //     invoice_operation_id, supplier_operation_id and account_operation_ids
+    //     let a later step reference an earlier staged card in the same turn
+    //     (measured 63 706). Paid for by trims in the same four tools: the
+    //     dims-bag and article notes, apply_slp restated in line_overrides, and
+    //     create_voucher's inbox_item_id repeating the tool description.
+    //     Measured 63 486. Ceiling unchanged.
     expect(approxTokens).toBeLessThan(63_500)
   })
 

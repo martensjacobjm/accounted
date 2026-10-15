@@ -61,6 +61,16 @@ interface Props {
   // Fired after a reject that carries a reason: the chat feeds this synthetic
   // correction back as a hidden user turn so the agent re-proposes inline.
   onRequestCorrection?: (correctionMessage: string) => void
+  // Outcome of "Godkänn alla" in StagedOperationList for this card. Derived,
+  // never copied into state: a committed bulk result shows the success view,
+  // a failed or skipped one shows its reason with the buttons still live.
+  externalResult?: ExternalCommitResult
+}
+
+export interface ExternalCommitResult {
+  status: 'committed' | 'failed' | 'skipped' | 'rejected'
+  error?: string
+  data?: CommitResultData
 }
 
 type State = 'pending' | 'committing' | 'committed' | 'rejecting' | 'rejected' | 'error'
@@ -69,7 +79,7 @@ type State = 'pending' | 'committing' | 'committed' | 'rejecting' | 'rejected' |
 // uses to deep-link to the freshly-created artifact. Different
 // operation_types return different shapes: only the ones we actually
 // surface as links are declared.
-interface CommitResultData {
+export interface CommitResultData {
   journal_entry_id?: string | null
   invoice_id?: string | null
   customer_id?: string | null
@@ -92,6 +102,7 @@ export default function ApprovalCard({
   preview,
   periodStatus,
   onRequestCorrection,
+  externalResult,
 }: Props) {
   // Gating the AI re-propose path only: approving/rejecting the staged
   // operation is manual ledger work and stays enabled without the AI add-on.
@@ -100,8 +111,8 @@ export default function ApprovalCard({
   const hasAi = useCapability(CAPABILITY.ai)
   // Chart names for the preview lines (same source as /pending).
   const accountNames = useAccountNamesSource()
-  const [state, setState] = useState<State>('pending')
-  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [localState, setState] = useState<State>('pending')
+  const [localErrorMessage, setErrorMessage] = useState<string | null>(null)
   const [confirmText, setConfirmText] = useState('')
   // Reject-with-reason form (mirrors the granskning dialog). Clicking "Avslå"
   // opens it; both fields are optional. When a reason is given, the rejection
@@ -112,7 +123,22 @@ export default function ApprovalCard({
   // Surfaced in the "Godkänt" success state so the user can jump directly
   // to the newly-created artifact (verifikation / faktura / kund) instead
   // of hunting through /bookkeeping.
-  const [commitResult, setCommitResult] = useState<CommitResultData | null>(null)
+  const [localCommitResult, setCommitResult] = useState<CommitResultData | null>(null)
+  // A card the user has not touched takes the bulk outcome; once the user
+  // acts on the card itself, its own state wins.
+  const untouched = localState === 'pending' && localErrorMessage === null
+  const state: State =
+    untouched && externalResult?.status === 'committed'
+      ? 'committed'
+      : untouched && externalResult?.status === 'rejected'
+        ? 'rejected'
+        : localState
+  const errorMessage =
+    localErrorMessage ??
+    (untouched && (externalResult?.status === 'failed' || externalResult?.status === 'skipped')
+      ? externalResult.error ?? null
+      : null)
+  const commitResult = localCommitResult ?? externalResult?.data ?? null
   // Set when commit fails because the booking posts to BAS accounts not yet
   // active in the chart. Drives the inline "activate and approve" affordance
   // (the op stays pending server-side, so retrying after activation works).

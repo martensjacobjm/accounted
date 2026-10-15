@@ -257,3 +257,80 @@ describe('chat system prompt: attached documents', () => {
     expect(out).not.toContain('# Bifogade dokument')
   })
 })
+
+// Fork bok.dalavs.se 2026-10-15: the chat greeted the signed-in owner "Hej
+// Wilma". With no name on the profile the first-message ritual still said
+// "hälsa vid namn" (template "Hej där"), and the model took a name from the
+// company profile or the memories. The greeting now builds on the signed-in
+// user only.
+function blockFor(firstName: string | null, tools: string[] = []): string {
+  return buildIdentityBlock({
+    intent: { ...intent, tools },
+    companyId: 'c1',
+    companyName: 'Malung-Sälen Flyttstäd KB',
+    firstName,
+    profileSummary: 'Firmatecknare: Wilma Eldh',
+    rankedMemory: [{ kind: 'fact', content: 'Wilmas egna pengar bokförs som eget uttag' }],
+    vatStatus: { vat_registered: true, vat_number: 'SE556677889901' },
+    today: '2026-10-15 (torsdag)',
+    supabase: {} as unknown as SupabaseClient,
+  })
+}
+
+describe('chat system prompt: greeting and address follow the signed-in user', () => {
+  it('greets by the user name and forbids any other name', () => {
+    const out = blockFor('Jacob')
+    expect(out).toContain('Användaren du hjälper heter Jacob')
+    expect(out).toContain('Mall: "Hej Jacob, jag ser att du')
+    expect(out).toContain('Tilltala aldrig användaren med något annat namn än Jacob')
+    // The user's own name stays usable even when an internal-names rule lists it.
+    expect(out).toContain('Hens eget namn får du alltid använda')
+  })
+
+  it('without a known name: no named greeting, and profile or memory names are off limits', () => {
+    const out = blockFor(null)
+    expect(out).toContain('Du vet inte vad användaren heter. Tilltala hen utan namn.')
+    expect(out).toMatch(/använd dem aldrig för att hälsa på eller tilltala användaren/)
+    expect(out).toContain('Mall: "Hej! Jag ser att du')
+    expect(out).not.toContain('Hej där')
+    expect(out).not.toContain('hälsar användaren vid namn')
+    expect(out).not.toMatch(/Mall: "Hej Wilma/)
+  })
+})
+
+describe('chat system prompt: multi-step requests are staged in one turn', () => {
+  const ALL = [
+    'gnubok_create_customer',
+    'gnubok_create_invoice',
+    'gnubok_send_invoice',
+    'gnubok_create_supplier',
+    'gnubok_create_supplier_invoice_from_inbox',
+    'gnubok_create_account',
+    'gnubok_create_voucher',
+  ]
+
+  it('names every chain the intent has tools for and forbids "approve first, then I do it"', () => {
+    const out = blockFor('Jacob', ALL)
+    expect(out).toContain('# Ärenden i flera steg: lägg fram alla kort i samma tur')
+    expect(out).toContain('gnubok_create_invoice med customer_operation_id')
+    expect(out).toContain('gnubok_send_invoice med invoice_operation_id')
+    expect(out).toContain('gnubok_create_supplier_invoice_from_inbox med supplier_operation_id')
+    expect(out).toContain('gnubok_create_voucher med account_operation_ids')
+    expect(out).toContain('Skriv ALDRIG "godkänn först, så gör jag sedan"')
+    expect(out).toContain('Godkänn alla')
+  })
+
+  it('renders only the chains the intent can run, and nothing for a read-only intent', () => {
+    const invoicing = blockFor('Jacob', ['gnubok_create_customer', 'gnubok_create_invoice'])
+    expect(invoicing).toContain('customer_operation_id')
+    expect(invoicing).not.toContain('supplier_operation_id')
+    expect(blockFor('Jacob', [])).not.toContain('# Ärenden i flera steg')
+  })
+
+  it('turns concrete how-to questions into work and bans click-path instructions', () => {
+    const out = blockFor('Jacob', ALL)
+    expect(out).toContain('är ett uppdrag: gör förslaget i stället för att förklara hur man gör')
+    expect(out).toContain('Skriv aldrig en instruktion av typen "gå till Bokföring och klicka på ..."')
+    expect(out).toContain('gör först allt du kan med de verktyg du har')
+  })
+})

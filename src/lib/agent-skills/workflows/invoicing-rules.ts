@@ -46,7 +46,7 @@ Good question: "Last time Acme AB was invoiced 1 250 kr per hour + moms for cons
 
 ## Customer is missing, or a number is missing
 
-- **Customer not found** in \`gnubok_list_customers\`: load \`customer-onboarding\` and stage \`gnubok_create_customer\` (\`name\`, \`customer_type\`; plus \`org_number\`, \`vat_number\`, \`email\`, \`address\`, \`postal_code\`, \`city\`, \`country\` as known). For a Swedish company, \`gnubok_lookup_company({ org_number })\` fetches name, address and VAT status from the public registry so the user confirms instead of types. The customer exists only after approval: \`gnubok_create_invoice\` returns "Customer not found" until then.
+- **Customer not found** in \`gnubok_list_customers\`: load \`customer-onboarding\` and stage \`gnubok_create_customer\` (\`name\`, \`customer_type\`; plus \`org_number\`, \`vat_number\`, \`email\`, \`address\`, \`postal_code\`, \`city\`, \`country\` as known). For a Swedish company, \`gnubok_lookup_company({ org_number })\` fetches name, address and VAT status from the public registry so the user confirms instead of types. Then stage the invoice in the same turn with \`customer_operation_id\` set to the customer's \`operation_id\` instead of \`customer_id\`: it approves after the customer, so never wait for the customer approval or tell the user to approve the customer first.
 - **Customer exists but lacks a field**: stage \`gnubok_update_customer\` (partial update). An EU \`vat_number\` is revalidated with VIES at approval.
 - **No email on the customer**: \`gnubok_send_invoice\` refuses. Ask for the invoicing email and update the customer, or let the user deliver the PDF another way and use \`gnubok_mark_invoice_as_sent\`.
 - **EU company without a VAT number**: ask for it. Without a validated number the invoice gets Swedish moms (the customer is treated as a consumer). Never invent a number or copy one from elsewhere.
@@ -120,7 +120,7 @@ Approval creates a **draft**: no number and no verifikat yet. The F-number is al
 
 ### Step 4: Send
 
-\`gnubok_send_invoice({ invoice_id })\` stages emailing the PDF. After approval it allocates the F-number, emails the customer and marks the invoice sent. It needs a customer email and the email service configured.
+\`gnubok_send_invoice({ invoice_id })\` stages emailing the PDF. After approval it allocates the F-number, emails the customer and marks the invoice sent. It needs a customer email and the email service configured. For an invoice staged in the same conversation, pass \`invoice_operation_id\` (the invoice's \`operation_id\`) instead of \`invoice_id\`: the send approves after the invoice.
 
 If the user delivered the invoice another way (printed, uploaded to the buyer's portal, sent through an external e-invoice provider), use \`gnubok_mark_invoice_as_sent({ invoice_id })\` instead: same numbering and booking effect, no email. Draft only.
 
@@ -149,7 +149,7 @@ An offert is \`document_type: 'quote'\` on \`gnubok_create_invoice\` with a requ
 ## When a tool call fails
 
 - **Validation** ("VAT rate X% is not allowed", missing description/unit/price, bad date): fix the argument from the message and restage once. If you do not understand why, ask the user; never resend the same payload.
-- **Not found** ("Customer not found", "Invoice not found"): the customer or draft was never approved, or the id belongs to another company. Check \`gnubok_list_pending_operations\` and the \`company_id\` you passed.
+- **Not found** ("Customer not found", "Invoice not found"): the customer or draft was never approved, or the id belongs to another company. Check \`gnubok_list_pending_operations\` and the \`company_id\` you passed. To build on a customer or invoice that is still pending, pass \`customer_operation_id\` / \`invoice_operation_id\` instead of the id.
 - **Period locked or closed** (\`PERIOD_LOCKED\`, \`PERIOD_ALREADY_CLOSED\`): the invoice date falls in a locked period. Ask the user whether the invoice date is right. Never move the date just to get past the lock, and never unlock a period as part of invoicing: that is the user's decision.
 - **Conflict / 409** (\`INVOICE_ALREADY_SENT\`, "Only draft invoices can be marked as sent", quote already invoiced): the state has moved on. Re-read with \`gnubok_list_invoices\` or \`gnubok_get_invoice\` and report what you see; do not repeat the write.
 - **Staged for approval**: that is success, not an error. Nothing exists until the user approves.
@@ -158,7 +158,7 @@ An offert is \`document_type: 'quote'\` on \`gnubok_create_invoice\` with a requ
 ## Approval discipline
 
 - Every write here stages a pending operation (except \`gnubok_set_quote_status\`). The user approves in Accounted (Granskning), or on a clear yes in chat you call \`gnubok_approve_pending_operation({ operation_id })\`. A widget-capable client can open the approval widget with \`gnubok_list_pending_operations({ render_ui: true })\`; this is optional, and ChatGPT, Grok and terminal agents list the staged items in text instead.
-- Stage the invoice and the send as two separate approvals unless the user said "send it" up front. Never approve without an explicit yes.
+- Stage the invoice and the send as two separate approvals. When the user said "send it" up front, stage both in the same turn (the send with \`invoice_operation_id\`). Never approve without an explicit yes.
 - Never delete an invoice the user did not ask to delete, never edit a sent invoice, never skip or set an invoice number, never invent an amount, a date or a VAT number.
 - Round money to whole öre (two decimals), never with toFixed. Account numbers are strings ('1510', '3001').
 

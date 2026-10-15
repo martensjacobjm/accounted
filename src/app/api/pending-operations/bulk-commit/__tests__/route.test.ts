@@ -361,4 +361,40 @@ describe('POST /api/pending-operations/bulk-commit', () => {
     })
     expect(mockCommit).toHaveBeenCalledTimes(3)
   })
+
+  it('commits a proposal after the proposal it depends on, whatever order the ids came in', async () => {
+    // Fork 2026-10-15: the chat stages "ny kund" and "faktura till kunden" in
+    // one turn; the invoice carries params.depends_on and must approve second.
+    const invoiceOp = makeOp({
+      id: VALID_ID_1,
+      operation_type: 'create_invoice',
+      risk_level: 'medium',
+      params: {
+        customer_id: null,
+        depends_on: [{ operation_id: VALID_ID_2, operation_type: 'create_customer', result_field: 'customer_id', param: 'customer_id' }],
+      },
+    })
+    const customerOp = makeOp({ id: VALID_ID_2, operation_type: 'create_customer', params: { name: 'Testkund Provning AB' } })
+    enqueue({ data: [invoiceOp, customerOp] })
+    mockCommit
+      .mockResolvedValueOnce({ status: 'committed', data: { customer_id: VALID_ID_3 } })
+      .mockResolvedValueOnce({ status: 'committed', data: { invoice_id: VALID_ID_4 } })
+
+    const request = createMockRequest('/api/pending-operations/bulk-commit', {
+      method: 'POST',
+      body: { ids: [VALID_ID_1, VALID_ID_2] },
+    })
+    const response = await POST(request, { params: Promise.resolve({}) })
+    const { status, body } = await parseJsonResponse<{
+      data: { results: Array<{ id: string; status: string; data?: Record<string, unknown> }> }
+    }>(response)
+
+    expect(status).toBe(200)
+    expect(mockCommit.mock.calls.map((c) => (c[3] as { id: string }).id)).toEqual([VALID_ID_2, VALID_ID_1])
+    // The executor result rides along so each chat card can link its artifact.
+    expect(body.data.results).toEqual([
+      { id: VALID_ID_2, status: 'committed', data: { customer_id: VALID_ID_3 } },
+      { id: VALID_ID_1, status: 'committed', data: { invoice_id: VALID_ID_4 } },
+    ])
+  })
 })

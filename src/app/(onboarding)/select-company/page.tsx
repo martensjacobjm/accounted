@@ -8,6 +8,7 @@ import {
 import type { EnrichmentCompanyRole } from '@/lib/company-lookup/types'
 import BankIdCompanyPicker from '@/components/onboarding/BankIdCompanyPicker'
 import { orgNumberKey, registrationNumberKey } from '@/lib/invariants/org-number'
+import { firstNameFromFullName } from '@/lib/user/first-name'
 
 export const dynamic = 'force-dynamic'
 
@@ -120,7 +121,7 @@ export default async function SelectCompanyPage({
     redirect('/login')
   }
 
-  const firstName = profile?.full_name?.split(' ')[0] ?? null
+  const firstName = firstNameFromFullName(profile?.full_name)
 
   const enrichmentValue = enrichmentRow
     ? { companyRoles: enrichmentRow.company_roles as EnrichmentCompanyRole[] }
