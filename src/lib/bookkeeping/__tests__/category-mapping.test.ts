@@ -7,6 +7,7 @@ import {
   buildMappingResultFromCategory,
 } from '../category-mapping'
 import { BAS_REFERENCE } from '../bas-data'
+import { ENTITY_TYPES } from '@/lib/company/entity-type'
 import { makeTransaction } from '@/tests/helpers'
 import type { TransactionCategory, VatTreatment } from '@/types'
 
@@ -461,6 +462,30 @@ describe('private transaction accounts by entity type and direction', () => {
   it('getDefaultAccountForCategory still returns 2013 for EF (default/withdrawal account)', () => {
     expect(getDefaultAccountForCategory('private', 'enskild_firma')).toBe('2013')
   })
+
+  it('KB withdrawal books 2013 / 1930 and deposit 1930 / 2018, never 2893', () => {
+    const withdrawal = getCategoryAccountMapping('private', -500, false, 'kommanditbolag')
+    expect(withdrawal.debitAccount).toBe('2013')
+    expect(withdrawal.creditAccount).toBe('1930')
+
+    const deposit = getCategoryAccountMapping('private', 500, false, 'kommanditbolag')
+    expect(deposit.debitAccount).toBe('1930')
+    expect(deposit.creditAccount).toBe('2018')
+
+    expect(getDefaultAccountForCategory('private', 'kommanditbolag')).toBe('2013')
+  })
+
+  it('KB private journal lines carry no moms and no 2893', () => {
+    const tx = makeTransaction({ amount: -1200, description: 'Eget uttag' })
+    const result = buildMappingResultFromCategory('private', tx, false, 'kommanditbolag')
+    expect(result.debit_account).toBe('2013')
+    expect(result.credit_account).toBe('1930')
+    expect(result.vat_lines).toEqual([])
+  })
+
+  it('KB education cost uses the base column (6991), not the AB personnel account', () => {
+    expect(getCategoryAccountMapping('expense_education', -500, true, 'kommanditbolag').debitAccount).toBe('6991')
+  })
 })
 
 describe('incoming expense refund (positive amount, expense category)', () => {
@@ -556,7 +581,7 @@ describe('category default → leaf account guarantee', () => {
   ]
 
   it.each(categoriesUnderGuard)('%s default does not resolve to a gruppkonto', (category) => {
-    for (const entityType of ['enskild_firma', 'aktiebolag', 'ideell_forening'] as const) {
+    for (const entityType of ENTITY_TYPES) {
       const target = getDefaultAccountForCategory(category, entityType)
       expect(groupAccountNumbers.has(target)).toBe(false)
     }

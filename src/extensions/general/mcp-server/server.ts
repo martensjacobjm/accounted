@@ -4279,9 +4279,12 @@ export const tools: McpTool[] = [
         )
       }
 
+      // The forms this deployment can create (feature flags applied), so the
+      // assistant never offers a form the create step would refuse.
+      const entityTypeQuestion = `entity_type (${creatableEntityTypes().join(', ')})`
       const askEverything = [
         'name',
-        'entity_type (enskild_firma, aktiebolag or ideell_forening)',
+        entityTypeQuestion,
         'f_skatt',
         'vat_registered (and moms_period if yes)',
         'accounting_method (accrual or cash)',
@@ -4340,7 +4343,7 @@ export const tools: McpTool[] = [
       // accounting method are ALWAYS the user's answer.
       const vatIsFact = lookup.registration.vat === true
       const stillToAsk: string[] = []
-      if (!entityType) stillToAsk.push('entity_type (enskild_firma, aktiebolag or ideell_forening)')
+      if (!entityType) stillToAsk.push(entityTypeQuestion)
       if (entityType === 'enskild_firma') {
         stillToAsk.push(
           'name: for enskild firma the verksamhetsnamn is freely choosable; suggest the registered name but let the user pick'
@@ -4437,7 +4440,7 @@ export const tools: McpTool[] = [
         org_number: { type: 'string', description: '10 digits; required when VAT-registered' },
         vat_registered: { type: 'boolean' },
         moms_period: { type: 'string', enum: ['monthly', 'quarterly', 'yearly'], description: 'Required when vat_registered' },
-        accounting_method: { type: 'string', enum: ['accrual', 'cash'], description: 'Omit to default by form: aktiebolag accrual, enskild firma cash; the preview flags the default' },
+        accounting_method: { type: 'string', enum: ['accrual', 'cash'], description: 'Omit to default by form; the preview flags the default' },
         f_skatt: { type: 'boolean' },
         fiscal_year_start_month: { type: 'integer', minimum: 1, maximum: 12 },
         first_fiscal_year: {

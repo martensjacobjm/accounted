@@ -557,6 +557,12 @@ describe('tools/list payload size guard', () => {
     //     only flows. Paid for by a shorter title and description. Measured
     //     63 498: two tokens of headroom, so the next default-catalog addition
     //     has to trim first. Ceiling unchanged.
+    //   * Kommanditbolag (fork bok.dalavs.se): gnubok_create_company's
+    //     entity_type enum gains a fourth form (+5 tokens, measured 63 503).
+    //     Paid for by accounting_method's note, which named the per-form
+    //     defaults for two of four forms; it now says only that the default
+    //     follows the form and the preview flags it. Measured 63 493.
+    //     Ceiling unchanged.
     expect(approxTokens).toBeLessThan(63_500)
   })
 

@@ -20,8 +20,6 @@ describe('mapEntityType', () => {
   it('returns null for unsupported entity types', () => {
     expect(mapEntityType('HB')).toBeNull()
     expect(mapEntityType('Handelsbolag')).toBeNull()
-    expect(mapEntityType('KB')).toBeNull()
-    expect(mapEntityType('Kommanditbolag')).toBeNull()
     expect(mapEntityType('Stiftelse')).toBeNull()
     expect(mapEntityType('Ekonomisk förening')).toBeNull()
     expect(mapEntityType('Bostadsrättsförening')).toBeNull()
@@ -56,6 +54,28 @@ describe('mapSetupEntityType: only creatable forms are prefilled', () => {
     expect(mapSetupEntityType('Aktiebolag')).toBe('aktiebolag')
     vi.stubEnv('NEXT_PUBLIC_IDEELL_FORENING_ENABLED', 'true')
     expect(mapSetupEntityType('Ideell förening')).toBe('ideell_forening')
+  })
+
+  it('maps kommanditbolag only when the creation flag is on', () => {
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', '')
+    expect(mapSetupEntityType('Kommanditbolag')).toBeNull()
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', 'true')
+    expect(mapSetupEntityType('Kommanditbolag')).toBe('kommanditbolag')
+    expect(mapSetupEntityType('Handelsbolag')).toBeNull()
+  })
+})
+
+describe('mapEntityType: kommanditbolag', () => {
+  it('maps the registry code and spelling of kommanditbolag', () => {
+    expect(mapEntityType('KB')).toBe('kommanditbolag')
+    expect(mapEntityType('Kommanditbolag')).toBe('kommanditbolag')
+    expect(mapEntityType('  kommanditbolag ')).toBe('kommanditbolag')
+  })
+
+  it('does not map handelsbolag or a loose substring', () => {
+    expect(mapEntityType('HB')).toBeNull()
+    expect(mapEntityType('Handelsbolag')).toBeNull()
+    expect(mapEntityType('Kommanditbolag under avveckling')).toBeNull()
   })
 })
 

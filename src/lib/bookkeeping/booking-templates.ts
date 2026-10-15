@@ -46,13 +46,30 @@ export type TemplateGroup =
   | 'tax'
   | 'closing'
 
+/**
+ * Which forms a template applies to: every form, or the forms the law names.
+ * An array is the rule for a form-specific template (docs/LEGAL-FORMS.md);
+ * the single-code spelling remains for the older tags.
+ */
+export type TemplateApplicability = 'all' | EntityType | readonly EntityType[]
+
+/** Whether a template tagged `applicability` applies to the form. */
+export function templateAppliesToForm(
+  applicability: TemplateApplicability,
+  entityType: EntityType,
+): boolean {
+  if (applicability === 'all') return true
+  if (typeof applicability === 'string') return applicability === entityType
+  return applicability.includes(entityType)
+}
+
 export interface BookingTemplate {
   id: string
   name_sv: string
   name_en: string
   group: TemplateGroup
   direction: 'expense' | 'income' | 'transfer'
-  entity_applicability: 'all' | EntityType
+  entity_applicability: TemplateApplicability
   debit_account: string
   credit_account: string
   debit_account_ab?: string
@@ -1463,11 +1480,13 @@ export const BOOKING_TEMPLATES: readonly BookingTemplate[] = [
   // --- PRIVATE TRANSFERS (5) ---
   {
     id: 'private_withdrawal_ef',
-    name_sv: 'Eget uttag (EF)',
-    name_en: 'Owner withdrawal (EF)',
+    name_sv: 'Eget uttag',
+    name_en: 'Owner withdrawal',
     group: 'private_transfers',
     direction: 'transfer',
-    entity_applicability: 'enskild_firma',
+    // Every form whose owners take egna uttag on 2013 (EF, KB). The id keeps
+    // its historical suffix: it is a stored key in mapping rules.
+    entity_applicability: ['enskild_firma', 'kommanditbolag'],
     debit_account: '2013',
     credit_account: '1930',
     vat_treatment: null,
@@ -1481,16 +1500,16 @@ export const BOOKING_TEMPLATES: readonly BookingTemplate[] = [
     auto_match_confidence: 0.85,
     default_private: true,
     fallback_category: 'private',
-    description_sv: 'Privat uttag från företagskonto (enskild firma)',
+    description_sv: 'Privat uttag från företagskonto (enskild firma, kommanditbolag)',
     common: true,
   },
   {
     id: 'private_deposit_ef',
-    name_sv: 'Egen insättning (EF)',
-    name_en: 'Owner deposit (EF)',
+    name_sv: 'Egen insättning',
+    name_en: 'Owner deposit',
     group: 'private_transfers',
     direction: 'transfer',
-    entity_applicability: 'enskild_firma',
+    entity_applicability: ['enskild_firma', 'kommanditbolag'],
     debit_account: '1930',
     credit_account: '2018',
     vat_treatment: null,
@@ -1504,7 +1523,7 @@ export const BOOKING_TEMPLATES: readonly BookingTemplate[] = [
     auto_match_confidence: 0.80,
     default_private: true,
     fallback_category: 'private',
-    description_sv: 'Egen insättning till företagskonto (enskild firma)',
+    description_sv: 'Egen insättning till företagskonto (enskild firma, kommanditbolag)',
     common: true,
   },
   {
@@ -2279,7 +2298,7 @@ export function searchTemplates(query: string, entityType?: EntityType): Booking
 
   return BOOKING_TEMPLATES.filter((t) => {
     // Filter by entity applicability
-    if (entityType && t.entity_applicability !== 'all' && t.entity_applicability !== entityType) {
+    if (entityType && !templateAppliesToForm(t.entity_applicability, entityType)) {
       return false
     }
 
@@ -2304,7 +2323,7 @@ export function getCommonTemplates(
 ): BookingTemplate[] {
   return BOOKING_TEMPLATES.filter((t) => {
     if (!t.common) return false
-    if (entityType && t.entity_applicability !== 'all' && t.entity_applicability !== entityType) return false
+    if (entityType && !templateAppliesToForm(t.entity_applicability, entityType)) return false
     if (direction && t.direction !== direction) return false
     return true
   })
@@ -2319,7 +2338,7 @@ export function getAdvancedTemplates(
 ): BookingTemplate[] {
   return BOOKING_TEMPLATES.filter((t) => {
     if (t.common) return false
-    if (entityType && t.entity_applicability !== 'all' && t.entity_applicability !== entityType) return false
+    if (entityType && !templateAppliesToForm(t.entity_applicability, entityType)) return false
     if (direction && t.direction !== direction) return false
     return true
   })
@@ -2332,11 +2351,13 @@ export function validateTemplateForEntity(
   template: BookingTemplate,
   entityType: EntityType
 ): { valid: boolean; error?: string } {
-  if (template.entity_applicability === 'all') return { valid: true }
-  if (template.entity_applicability === entityType) return { valid: true }
+  if (templateAppliesToForm(template.entity_applicability, entityType)) return { valid: true }
+  const forms = typeof template.entity_applicability === 'string'
+    ? template.entity_applicability
+    : template.entity_applicability.join(', ')
   return {
     valid: false,
-    error: `Template "${template.name_sv}" is only valid for ${template.entity_applicability}. Your entity type is ${entityType}.`,
+    error: `Template "${template.name_sv}" is only valid for ${forms}. Your entity type is ${entityType}.`,
   }
 }
 
@@ -2427,7 +2448,7 @@ export function findMatchingTemplates(
 
   for (const t of BOOKING_TEMPLATES) {
     // Filter entity applicability
-    if (entityType && t.entity_applicability !== 'all' && t.entity_applicability !== entityType) {
+    if (entityType && !templateAppliesToForm(t.entity_applicability, entityType)) {
       continue
     }
 

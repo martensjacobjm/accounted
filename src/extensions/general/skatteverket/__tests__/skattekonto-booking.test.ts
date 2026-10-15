@@ -182,6 +182,27 @@ describe('guessCounterAccount', () => {
     ).toBe('2710')
   })
 
+  it('books a kommanditbolag preliminär skatt as an eget uttag (2013), never as a skatteskuld (2510)', async () => {
+    const { supabase, enqueue } = makeSupabase()
+    enqueue({ data: SEED_RULES })
+    // The delägare, not the KB, is taxed for the income (IL 5 kap. 1 §): the
+    // F-skatt the bolag pays is the delägare's tax and an uttag, as for an EF.
+    expect(
+      (await guessCounterAccount(supabase as unknown as SupabaseClient, 'company-1', 'Debiterad preliminärskatt', 'kommanditbolag'))?.account,
+    ).toBe('2013')
+  })
+
+  it('keeps 2710 for "avdragen skatt" on a kommanditbolag: its skattekonto is the bolag\'s own', async () => {
+    const { supabase, enqueue } = makeSupabase()
+    enqueue({ data: SEED_RULES })
+    // The employer gate is about the EF owner's personal skattekonto; a KB has
+    // an organisationsnummer and its own skattekonto, so withheld tax there is
+    // the bolag's payroll liability.
+    expect(
+      (await guessCounterAccount(supabase as unknown as SupabaseClient, 'company-1', 'Avdragen skatt', 'kommanditbolag'))?.account,
+    ).toBe('2710')
+  })
+
   it('routes VAT settlements to 2650', async () => {
     const { supabase, enqueue } = makeSupabase()
     enqueue({ data: SEED_RULES })

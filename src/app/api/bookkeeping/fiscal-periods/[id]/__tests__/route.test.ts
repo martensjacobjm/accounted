@@ -34,7 +34,7 @@ function patchRequest(body: unknown): Request {
 function buildMockSupabase(options: {
   user?: { id: string } | null
   period?: { id: string; period_start: string; period_end: string; locked_at: string | null; is_closed: boolean } | null
-  entityType?: 'aktiebolag' | 'enskild_firma'
+  entityType?: 'aktiebolag' | 'enskild_firma' | 'kommanditbolag'
   postedEntryCount?: number
   earlierPeriodCount?: number
   overlapping?: Array<{ id: string; name: string }>
@@ -238,6 +238,43 @@ describe('PATCH /api/bookkeeping/fiscal-periods/[id]', () => {
       expect(res.status).toBe(400)
       const body = await res.json()
       expect(body.error).toMatch(/18 months/)
+    })
+  })
+
+  describe('kommanditbolag: BFL 3 kap. 1 § (fysisk delägare taxed for the income)', () => {
+    it('rejects a KB subsequent period that does not start on 1 januari', async () => {
+      buildMockSupabase({
+        period: { id: 'p2', period_start: '2026-01-01', period_end: '2026-12-31', locked_at: null, is_closed: false },
+        earlierPeriodCount: 1,
+        entityType: 'kommanditbolag',
+      })
+      const res = await PATCH(
+        patchRequest({ period_start: '2026-05-01', period_end: '2026-12-31' }),
+        createMockRouteParams({ id: 'p2' }),
+      )
+      expect(res.status).toBe(400)
+      const body = await res.json()
+      expect(body.error).toMatch(/kalenderår/)
+    })
+
+    it('rejects a KB first period that does not end on 31 december', async () => {
+      buildMockSupabase({ earlierPeriodCount: 0, entityType: 'kommanditbolag' })
+      const res = await PATCH(
+        patchRequest({ period_start: '2025-04-10', period_end: '2026-03-31' }),
+        createMockRouteParams({ id: 'p1' }),
+      )
+      expect(res.status).toBe(400)
+      const body = await res.json()
+      expect(body.error).toMatch(/31 december/)
+    })
+
+    it('accepts a short KB first period ending 31 december (registered mid-year)', async () => {
+      buildMockSupabase({ earlierPeriodCount: 0, entityType: 'kommanditbolag' })
+      const res = await PATCH(
+        patchRequest({ period_start: '2025-04-10', period_end: '2025-12-31' }),
+        createMockRouteParams({ id: 'p1' }),
+      )
+      expect(res.status).toBe(200)
     })
   })
 })

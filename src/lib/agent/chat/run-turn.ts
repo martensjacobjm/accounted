@@ -15,6 +15,7 @@ import { buildSystemPrompt } from './system-prompt'
 import { loadFiscalYearInventory } from '@/lib/agent/fiscal-years'
 import { createLogger } from '@/lib/logger'
 import { swedishToday } from '@/lib/utils'
+import { composeUserMessageWithAttachments, type ChatAttachmentRef } from './attachment-block'
 
 const log = createLogger('agent.chat.run-turn')
 
@@ -174,6 +175,10 @@ interface RunTurnArgs {
   // still persisted for Anthropic context on subsequent turns, but flagged
   // hidden=true so /chat/[id] hydration doesn't surface it as a user bubble.
   userMessageHidden?: boolean
+  // Documents the user attached to this turn, already resolved against the
+  // company by the caller. Rendered as a block after userMessage, both in what
+  // the model sees and in what is persisted, so later turns keep the reference.
+  attachments?: ChatAttachmentRef[]
   // Profile summary the caller already loaded for this turn (the invoke route
   // reads it to build a first-turn prompt template). Passed through so the same
   // read doesn't happen twice per turn.
@@ -286,14 +291,15 @@ export async function runChatTurn(args: RunTurnArgs): Promise<void> {
 
   // 3: assemble Anthropic messages: prior history + new user turn.
   const history = await loadConversationMessages(supabase, conversationId)
-  const newUserMessage = { role: 'user' as const, content: userMessage }
+  const turnText = composeUserMessageWithAttachments(userMessage, args.attachments)
+  const newUserMessage = { role: 'user' as const, content: turnText }
 
   if (persist) {
     await persistMessage(
       supabase,
       conversationId,
       'user',
-      userMessage,
+      turnText,
       userMessageHidden === true,
     )
   }

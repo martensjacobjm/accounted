@@ -26,6 +26,7 @@ export const ENTITY_TYPES = [
   'enskild_firma',
   'aktiebolag',
   'ideell_forening',
+  'kommanditbolag',
 ] as const satisfies readonly EntityType[]
 
 // Compile-time proof that ENTITY_TYPES lists every member of the union.
@@ -107,6 +108,7 @@ export async function resolveCompanyEntityType(
 // ── Creation gate ────────────────────────────────────────────────────
 
 export const IDEELL_FORENING_FLAG = 'NEXT_PUBLIC_IDEELL_FORENING_ENABLED'
+export const KOMMANDITBOLAG_FLAG = 'NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED'
 
 /**
  * One reader per `creationFlag` a profile declares. The literal
@@ -117,6 +119,7 @@ export const IDEELL_FORENING_FLAG = 'NEXT_PUBLIC_IDEELL_FORENING_ENABLED'
  */
 const CREATION_FLAG_READERS: Readonly<Record<string, () => string | undefined>> = {
   [IDEELL_FORENING_FLAG]: () => process.env.NEXT_PUBLIC_IDEELL_FORENING_ENABLED,
+  [KOMMANDITBOLAG_FLAG]: () => process.env.NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED,
 }
 
 export function creationFlagReader(flag: string): (() => string | undefined) | undefined {
@@ -167,9 +170,9 @@ export function resultClosingAccounts(entityType: EntityType): ResultClosingAcco
 }
 
 /**
- * Account for money settled with the owner (EF: egna uttag/insättningar, AB:
- * skuld till aktieägare). A förening has no owner; a member who pays or is
- * paid is a plain short-term counterparty on 2890.
+ * Account for money settled with the owner (EF and KB: egna uttag/insättningar
+ * 2013/2018, AB: skuld till aktieägare 2893). A förening has no owner; a
+ * member who pays or is paid is a plain short-term counterparty on 2890.
  */
 export function ownerSettlementAccount(
   entityType: EntityType,
@@ -226,6 +229,17 @@ export function booksCurrentTax(entityType: EntityType): boolean {
   return legalFormProfile(entityType).filings.booksCurrentTax
 }
 
+/**
+ * Whether the business income is taxed on the owners rather than on the
+ * company (EF: the owner; KB: each delägare). Income tax the company pays is
+ * then the owner's tax, booked as an eget uttag, never as a skatteskuld. False
+ * for an AB, which books its own tax, and for a förening, which has no owner.
+ */
+export function ownerBearsIncomeTax(entityType: EntityType): boolean {
+  const profile = legalFormProfile(entityType)
+  return profile.equity.hasOwners && !profile.filings.booksCurrentTax
+}
+
 /** Periodiseringsfond and överavskrivningar proposals in the year-end wizard. */
 export function supportsCorporateTaxDispositions(entityType: EntityType): boolean {
   return legalFormProfile(entityType).filings.corporateTaxDispositions
@@ -239,7 +253,11 @@ export function supportsAccountingFramework(
   return legalFormProfile(entityType).filings.frameworks.includes(framework)
 }
 
-/** BFL 3 kap 1 §: a fysisk person (enskild firma) is bound to the calendar year. */
+/**
+ * BFL 3 kap 1 §: a fysisk person (enskild firma), and a handelsbolag or
+ * kommanditbolag where a fysisk person is taxed for the income, is bound to
+ * the calendar year.
+ */
 export function fiscalYearLockedToCalendar(entityType: EntityType): boolean {
   return legalFormProfile(entityType).fiscalYear.calendarOnly
 }
@@ -256,7 +274,8 @@ export function defaultAccountingMethod(entityType: EntityType): 'accrual' | 'ca
 /**
  * Simplified year-end regelverk label used by the accrual threshold logic
  * (K1: 5 000 kr per post may stay unperiodised). EF: BFNAR 2006:1; ideell
- * förening: BFNAR 2010:1; AB prepares under K2.
+ * förening: BFNAR 2010:1; AB prepares under K2; KB closes with an årsbokslut
+ * under BFNAR 2017:3 (K2 rules).
  */
 export function simplifiedYearEndRegelverk(entityType: EntityType): 'K1' | 'K2' {
   return legalFormProfile(entityType).bookkeeping.simplifiedRegelverk

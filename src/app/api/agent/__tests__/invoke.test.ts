@@ -11,7 +11,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { NextResponse } from 'next/server'
 import { createQueuedMockSupabase, createMockRequest, parseJsonResponse } from '@/tests/helpers'
 
-const { supabase, enqueue, reset } = createQueuedMockSupabase()
+const { supabase, enqueue, reset, findCalls } = createQueuedMockSupabase()
 
 const requireAuthMock = vi.fn()
 vi.mock('@/lib/auth/require-auth', () => ({
@@ -278,5 +278,126 @@ describe('POST /api/agent/invoke', () => {
     expect(args.preloadedProfileSummary).toBe('Byggkonsult, K2')
     expect(args.userMessage).toBe('templated first turn')
     expect(args.userMessageHidden).toBe(true)
+  })
+})
+
+describe('POST /api/agent/invoke: attachments', () => {
+  const DOC_1 = '22222222-2222-4222-8222-222222222222'
+  const DOC_2 = '33333333-3333-4333-8333-333333333333'
+
+  function postWith(overrides: Record<string, unknown>) {
+    return POST(createMockRequest('/api/agent/invoke', { method: 'POST', body: body(overrides) }))
+  }
+
+  it('returns 400 for more than five attachments', async () => {
+    const ids = Array.from({ length: 6 }, (_, i) => `${i}2222222-2222-4222-8222-222222222222`)
+    const { status } = await parseJsonResponse(await postWith({ attachment_document_ids: ids }))
+    expect(status).toBe(400)
+    expect(runChatTurnMock).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 for an attachment id that is not a uuid', async () => {
+    const { status } = await parseJsonResponse(await postWith({ attachment_document_ids: ['../../etc/passwd'] }))
+    expect(status).toBe(400)
+    expect(runChatTurnMock).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when the intent cannot read attachments, before any write', async () => {
+    getIntentMock.mockReturnValue({ id: 'vat.review', sheetTitle: 'Moms' })
+    enqueuePreamble()
+    const { status } = await parseJsonResponse(
+      await postWith({ intent_id: 'vat.review', attachment_document_ids: [DOC_1] }),
+    )
+    expect(status).toBe(400)
+    expect(findCalls('agent_conversations', 'insert')).toHaveLength(0)
+    expect(runChatTurnMock).not.toHaveBeenCalled()
+  })
+
+  it('returns 404 for a document the company cannot see, before any write', async () => {
+    enqueuePreamble()
+    enqueue({ data: [] }) // document_attachments: filtered out by company_id
+    const { status, body: json } = await parseJsonResponse<{ error: string }>(
+      await postWith({ attachment_document_ids: [DOC_1] }),
+    )
+    expect(status).toBe(404)
+    expect(json.error).toMatch(/hittades inte/)
+    expect(findCalls('document_attachments', 'eq')).toContainEqual(['company_id', 'company-1'])
+    expect(findCalls('agent_conversations', 'insert')).toHaveLength(0)
+    expect(runChatTurnMock).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when a stored file is not a type the chat reads', async () => {
+    enqueuePreamble()
+    enqueue({ data: [{ id: DOC_1, file_name: 'avtal.docx', mime_type: 'application/msword', file_size_bytes: 1000 }] })
+    const { status } = await parseJsonResponse(await postWith({ attachment_document_ids: [DOC_1] }))
+    expect(status).toBe(400)
+    expect(runChatTurnMock).not.toHaveBeenCalled()
+  })
+
+  it('runs an attachment-only first turn as the user turn, not the intent template', async () => {
+    // capture/promptTemplate deliberately throw: the template path must not run.
+    getIntentMock.mockReturnValue({
+      id: 'general.help',
+      sheetTitle: 'Assistenten',
+      capture: vi.fn().mockRejectedValue(new Error('template path taken')),
+      promptTemplate: vi.fn(),
+    })
+    enqueuePreamble()
+    enqueue({
+      data: [
+        { id: DOC_1, file_name: 'kvitto.jpg', mime_type: 'image/jpeg', file_size_bytes: 900_000 },
+        { id: DOC_2, file_name: 'faktura.pdf', mime_type: 'application/pdf', file_size_bytes: 80_000 },
+      ],
+    })
+    enqueue({ data: [{ id: 'inbox-1', document_id: DOC_1, status: 'processing' }] })
+    enqueueAcceptedTail()
+    enqueue({ data: { id: CONVERSATION_ID } }) // conversation insert
+
+    const res = await postWith({ user_message: '', attachment_document_ids: [DOC_1, DOC_2] })
+    expect(res.status).toBe(200)
+    await res.text()
+
+    expect(runChatTurnMock).toHaveBeenCalledTimes(1)
+    const args = runChatTurnMock.mock.calls[0]![0] as {
+      userMessage: string
+      userMessageHidden?: boolean
+      attachments?: unknown
+    }
+    expect(args.userMessage).toBe('Jag har bifogat underlag.')
+    expect(args.userMessageHidden).toBe(false)
+    expect(args.attachments).toEqual([
+      { documentId: DOC_1, inboxItemId: 'inbox-1', fileName: 'kvitto.jpg', mimeType: 'image/jpeg', inboxStatus: 'processing' },
+      { documentId: DOC_2, inboxItemId: null, fileName: 'faktura.pdf', mimeType: 'application/pdf', inboxStatus: null },
+    ])
+  })
+
+  it('passes attachments with typed text on a resumed conversation', async () => {
+    enqueuePreamble()
+    enqueue({ data: { id: CONVERSATION_ID, user_id: 'user-1', company_id: 'company-1', intent_id: 'general.help' } })
+    enqueue({ data: [{ id: DOC_1, file_name: 'kvitto.jpg', mime_type: 'image/jpeg', file_size_bytes: 900_000 }] })
+    enqueue({ data: [] }) // no inbox row
+    enqueueAcceptedTail()
+
+    const res = await postWith({
+      conversation_id: CONVERSATION_ID,
+      user_message: 'Bokför den som drivmedel',
+      attachment_document_ids: [DOC_1],
+    })
+    await res.text()
+
+    const args = runChatTurnMock.mock.calls[0]![0] as { userMessage: string; attachments?: Array<{ documentId: string }> }
+    expect(args.userMessage).toBe('Bokför den som drivmedel')
+    expect(args.attachments?.map((a) => a.documentId)).toEqual([DOC_1])
+  })
+
+  it('runs a turn without attachments exactly as before', async () => {
+    enqueuePreamble()
+    enqueue({ data: { id: CONVERSATION_ID, user_id: 'user-1', company_id: 'company-1', intent_id: 'general.help' } })
+    enqueueAcceptedTail()
+    const res = await postWith({ conversation_id: CONVERSATION_ID })
+    await res.text()
+    const args = runChatTurnMock.mock.calls[0]![0] as { attachments?: unknown[] }
+    expect(args.attachments).toEqual([])
+    expect(findCalls('document_attachments', 'select')).toHaveLength(0)
   })
 })

@@ -53,6 +53,7 @@ describe('legal forms: the registry', () => {
       enskild_firma: 'Enskild firma',
       aktiebolag: 'Aktiebolag',
       ideell_forening: 'Ideell förening',
+      kommanditbolag: 'Kommanditbolag',
     })
   })
 
@@ -132,6 +133,20 @@ describe('legal forms: capability readers', () => {
     expect(templateAccountForForm('ideell_forening', '6991', '6991')).toBe('6991')
     expect(templateAccountForForm('ideell_forening', undefined, undefined)).toBeUndefined()
   })
+
+  it('give a kommanditbolag the owner accounts of the base column, never the AB override', () => {
+    expect(templateAccountForForm('kommanditbolag', '2013', '2893')).toBe('2013')
+    expect(templateAccountForForm('kommanditbolag', '2018', undefined)).toBe('2018')
+    expect(templateAccountForForm('kommanditbolag', '6991', '7610')).toBe('6991')
+    expect(filesIncomeReturn('kommanditbolag')).toBeNull()
+    expect(booksCurrentTax('kommanditbolag')).toBe(false)
+    expect(supportsCorporateTaxDispositions('kommanditbolag')).toBe(false)
+    expect(supportsAccountingFramework('kommanditbolag', 'K2')).toBe(true)
+    expect(supportsAccountingFramework('kommanditbolag', 'K3')).toBe(true)
+    expect(supportsAccountingFramework('kommanditbolag', 'K1')).toBe(false)
+    expect(hasOwners('kommanditbolag')).toBe(true)
+    expect(legalFormGlossary('kommanditbolag')).toEqual({ entity: 'bolaget', owner: 'Delägare', meeting: null })
+  })
 })
 
 describe('legal forms: creation gate reads the profile flag', () => {
@@ -145,5 +160,13 @@ describe('legal forms: creation gate reads the profile flag', () => {
     vi.stubEnv('NEXT_PUBLIC_IDEELL_FORENING_ENABLED', 'true')
     expect(isEntityTypeCreatable('ideell_forening')).toBe(true)
     expect(isEntityTypeCreatable('aktiebolag')).toBe(true)
+  })
+
+  it('gates kommanditbolag on NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', () => {
+    expect(LEGAL_FORMS.kommanditbolag.creationFlag).toBe('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED')
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', '')
+    expect(isEntityTypeCreatable('kommanditbolag')).toBe(false)
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', 'true')
+    expect(isEntityTypeCreatable('kommanditbolag')).toBe(true)
   })
 })

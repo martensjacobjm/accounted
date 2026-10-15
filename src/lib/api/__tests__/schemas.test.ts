@@ -1972,6 +1972,21 @@ describe('UpdateSettingsSchema', () => {
     expect(result.success).toBe(true)
   })
 
+  it('enforces BFL 3 kap. 1 §: a kommanditbolag must start in January', () => {
+    const rejected = UpdateSettingsSchema.safeParse({
+      entity_type: 'kommanditbolag',
+      fiscal_year_start_month: 5,
+    })
+    expect(rejected.success).toBe(false)
+    if (!rejected.success) {
+      const bflError = rejected.error.issues.find((i) => i.path.includes('fiscal_year_start_month'))
+      expect(bflError?.message).toContain('BFL')
+    }
+    expect(
+      UpdateSettingsSchema.safeParse({ entity_type: 'kommanditbolag', fiscal_year_start_month: 1 }).success,
+    ).toBe(true)
+  })
+
   it('allows aktiebolag with any start month', () => {
     for (let month = 1; month <= 12; month++) {
       const result = UpdateSettingsSchema.safeParse({

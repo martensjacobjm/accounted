@@ -5,6 +5,7 @@ import {
   filesIncomeReturn,
   hasOwners,
   isEntityType,
+  ownerBearsIncomeTax,
   preparesArsredovisning,
   supportsCorporateTaxDispositions,
   usesPersonnummerAsOrgNumber,
@@ -34,9 +35,14 @@ export function fallbackAtomSelection(inputs: ComposerInputs): AtomSelection {
   const hasTaxDispositions = form !== null && supportsCorporateTaxDispositions(form)
   // The owner IS the company: an enskild firma.
   const ownerIsTheCompany = form !== null && usesPersonnummerAsOrgNumber(form)
-  // Owned by someone other than itself: shareholders (an aktiebolag), not
-  // members (a förening) and not the person behind an enskild firma.
-  const hasShareholders = form !== null && hasOwners(form) && !usesPersonnummerAsOrgNumber(form)
+  // Owned by someone other than itself through a taxed company: shareholders
+  // (an aktiebolag), not members (a förening), not the person behind an
+  // enskild firma and not delägare in a kommanditbolag, who are taxed for the
+  // income directly.
+  const hasShareholders = form !== null && hasOwners(form) && !ownerBearsIncomeTax(form)
+  // A partnership: the income is taxed on the delägare, and the bolag has an
+  // organisationsnummer of its own (kommanditbolag).
+  const isPartnership = form !== null && ownerBearsIncomeTax(form) && !usesPersonnummerAsOrgNumber(form)
 
   const tic = inputs.ticSnapshot as
     | {
@@ -69,6 +75,9 @@ export function fallbackAtomSelection(inputs: ComposerInputs): AtomSelection {
 
   if (isEmployer) {
     pushIfKnown(horizontal, 'horizontal/swedish-payroll', has)
+  }
+  if (isPartnership) {
+    pushIfKnown(horizontal, 'horizontal/swedish-hb-kb-beskattning', has)
   }
 
   // Vertical fallback: best-effort SNI-prefix match. Empty list is acceptable:

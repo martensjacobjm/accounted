@@ -8,6 +8,7 @@ import {
   defaultAccountingMethod,
   fiscalYearLockedToCalendar,
   isEntityTypeCreatable,
+  legalFormProfile,
 } from '@/lib/company/entity-type'
 import type { CreateCompanyInput } from '@/lib/company/create-company'
 
@@ -96,15 +97,14 @@ export const CompanySetupSchema = z
       })
     }
     if (
-      value.entity_type === 'enskild_firma' &&
+      fiscalYearLockedToCalendar(value.entity_type) &&
       value.first_fiscal_year &&
       !value.first_fiscal_year.end.endsWith('-12-31')
     ) {
       ctx.addIssue({
         code: 'custom',
         path: ['first_fiscal_year', 'end'],
-        message:
-          'An enskild firma always closes its fiscal year on 31 December (BFL 3 kap. 1 §): the first year may be shorter or up to 18 months, but must end on 12-31.',
+        message: `A ${legalFormProfile(value.entity_type).label.toLowerCase()} always closes its fiscal year on 31 December (BFL 3 kap. 1 §): the first year may be shorter or up to 18 months, but must end on 12-31.`,
       })
     }
     if (value.org_number && normalizeOrgNumber(value.org_number) === null) {

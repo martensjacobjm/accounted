@@ -9,6 +9,7 @@ import {
 } from '@/lib/tax/deadline-generator'
 import { validateBody } from '@/lib/api/validate'
 import { UpdateSettingsSchema } from '@/lib/api/schemas'
+import { fiscalYearLockedToCalendar, isEntityType, legalFormProfile } from '@/lib/company/entity-type'
 import { getErrorMessage as getUserErrorMessage } from '@/lib/errors/get-error-message'
 import { errorResponseFromCode } from '@/lib/errors/get-structured-error'
 import { propagateLegacyPayeeWrite } from '@/lib/cash-accounts/invoice-payee'
@@ -110,12 +111,17 @@ export const PUT = withRouteContext(
       delete (body as Record<string, unknown>).org_number
     }
 
-    // Validate: enskild firma must use calendar year (BFL 3 kap.)
+    // Validate: a form bound to the calendar year must use it (BFL 3 kap. 1 §)
     const effectiveEntityType = body.entity_type || oldSettings?.entity_type
     const effectiveFYStartMonth = body.fiscal_year_start_month ?? oldSettings?.fiscal_year_start_month
-    if (effectiveEntityType === 'enskild_firma' && effectiveFYStartMonth && effectiveFYStartMonth !== 1) {
+    if (
+      isEntityType(effectiveEntityType) &&
+      fiscalYearLockedToCalendar(effectiveEntityType) &&
+      effectiveFYStartMonth &&
+      effectiveFYStartMonth !== 1
+    ) {
       return NextResponse.json(
-        { error: 'Enskild firma måste använda kalenderår (BFL 3 kap.)' },
+        { error: `${legalFormProfile(effectiveEntityType).label} måste använda kalenderår (BFL 3 kap.)` },
         { status: 400 }
       )
     }

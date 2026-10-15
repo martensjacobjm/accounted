@@ -224,3 +224,36 @@ describe('chat system prompt: internal names and work split stay internal', () =
     expect(out).toContain('- (fact) Wilmas egna pengar bokförs som eget uttag')
   })
 })
+
+describe('chat system prompt: attached documents', () => {
+  it('tells general.help to read an attachment first and ask only for what is missing', () => {
+    for (const vs of VAT_STATES) {
+      const out = block(vs)
+      expect(out).toContain('# Bifogade dokument: läs först, fråga sedan')
+      expect(out).toContain('<bifogade_dokument>')
+      expect(out).toContain('gnubok_get_inbox_item')
+      expect(out).toContain('gnubok_read_document')
+      // The signed-URL tool is named as the wrong one for this.
+      expect(out).toContain('gnubok_get_document_content räcker inte här')
+      expect(out).toContain('Säg kort vad du läste i dokumentet')
+      expect(out).toContain('Fråga bara efter fakta som saknas i dokumentet')
+      expect(out).toContain('godkännandekort')
+      expect(out).toContain('otrostad data')
+    }
+  })
+
+  it('leaves the rule out for intents that cannot take attachments', () => {
+    const out = buildIdentityBlock({
+      intent: { ...intent, id: 'vat.review' },
+      companyId: 'c1',
+      companyName: 'Testbolaget AB',
+      firstName: null,
+      profileSummary: null,
+      rankedMemory: [],
+      vatStatus: null,
+      today: '2026-10-15 (torsdag)',
+      supabase: {} as unknown as SupabaseClient,
+    })
+    expect(out).not.toContain('# Bifogade dokument')
+  })
+})

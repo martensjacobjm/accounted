@@ -13,8 +13,10 @@ import {
   getAdvancedTemplates,
   validateTemplateForEntity,
   stripBankNoise,
+  templateAppliesToForm,
   type BookingTemplate,
 } from '../booking-templates'
+import { ENTITY_TYPES } from '@/lib/company/entity-type'
 import { applySettlementAccount } from '../mapping-engine'
 
 // ============================================================
@@ -38,7 +40,13 @@ describe('BOOKING_TEMPLATES data integrity', () => {
       expect(t.name_en).toBeTruthy()
       expect(t.group).toBeTruthy()
       expect(['expense', 'income', 'transfer']).toContain(t.direction)
-      expect(['all', 'enskild_firma', 'aktiebolag']).toContain(t.entity_applicability)
+      const applicability = t.entity_applicability
+      if (Array.isArray(applicability)) {
+        expect(applicability.length).toBeGreaterThan(0)
+        for (const form of applicability) expect(ENTITY_TYPES).toContain(form)
+      } else {
+        expect(['all', 'enskild_firma', 'aktiebolag']).toContain(applicability)
+      }
       expect(t.debit_account).toMatch(/^\d{4}$/)
       expect(t.credit_account).toMatch(/^\d{4}$/)
       expect(['full', 'non_deductible', 'conditional']).toContain(t.deductibility)
@@ -784,6 +792,45 @@ describe('validateTemplateForEntity', () => {
     const result = validateTemplateForEntity(template, 'enskild_firma')
     expect(result.valid).toBe(false)
     expect(result.error).toContain('aktiebolag')
+  })
+
+  it('accepts the owner withdrawal and deposit templates for a kommanditbolag', () => {
+    for (const id of ['private_withdrawal_ef', 'private_deposit_ef']) {
+      expect(validateTemplateForEntity(getTemplateById(id)!, 'kommanditbolag').valid, id).toBe(true)
+      expect(validateTemplateForEntity(getTemplateById(id)!, 'ideell_forening').valid, id).toBe(false)
+    }
+  })
+})
+
+describe('templateAppliesToForm', () => {
+  it('reads all, a single code and an array of codes', () => {
+    expect(templateAppliesToForm('all', 'kommanditbolag')).toBe(true)
+    expect(templateAppliesToForm('aktiebolag', 'aktiebolag')).toBe(true)
+    expect(templateAppliesToForm('aktiebolag', 'kommanditbolag')).toBe(false)
+    expect(templateAppliesToForm(['enskild_firma', 'kommanditbolag'], 'kommanditbolag')).toBe(true)
+    expect(templateAppliesToForm(['enskild_firma', 'kommanditbolag'], 'aktiebolag')).toBe(false)
+  })
+
+  it('offers a kommanditbolag the owner templates and the 2013/2018 accounts', () => {
+    const common = getCommonTemplates('kommanditbolag', 'transfer').map((t) => t.id)
+    expect(common).toContain('private_withdrawal_ef')
+    expect(common).toContain('private_deposit_ef')
+    expect(getCommonTemplates('kommanditbolag').map((t) => t.id)).not.toContain('share_capital_deposit')
+
+    const withdrawal = buildMappingResultFromTemplate(
+      getTemplateById('private_withdrawal_ef')!,
+      makeTransaction({ amount: -5000 }),
+      'kommanditbolag',
+    )
+    expect(withdrawal.debit_account).toBe('2013')
+    expect(withdrawal.credit_account).toBe('1930')
+    const deposit = buildMappingResultFromTemplate(
+      getTemplateById('private_deposit_ef')!,
+      makeTransaction({ amount: 5000 }),
+      'kommanditbolag',
+    )
+    expect(deposit.debit_account).toBe('1930')
+    expect(deposit.credit_account).toBe('2018')
   })
 })
 

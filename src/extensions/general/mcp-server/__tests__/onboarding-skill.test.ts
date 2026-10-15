@@ -10,21 +10,32 @@ import { onboardingSkill } from '@/lib/agent-skills/workflows/onboarding'
 afterEach(() => vi.unstubAllEnvs())
 
 describe('onboarding skill: supported forms sentence', () => {
-  it('lists the creatable forms with their labels and the rest as not yet (flag off)', () => {
+  it('lists the creatable forms with their labels and the rest as not yet (flags off)', () => {
     vi.stubEnv('NEXT_PUBLIC_IDEELL_FORENING_ENABLED', '')
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', '')
     const body = onboardingSkill.body
     expect(body).toContain('`enskild_firma` (Enskild firma)')
     expect(body).toContain('`aktiebolag` (Aktiebolag)')
     expect(body).not.toContain('`ideell_forening`')
-    expect(body).toMatch(/Not yet: Ideell förening, Ekonomisk förening, Bostadsrättsförening, Samfällighetsförening, Stiftelse\./)
+    expect(body).not.toContain('`kommanditbolag`')
+    expect(body).toMatch(/Not yet: Ideell förening, Kommanditbolag, Ekonomisk förening, Bostadsrättsförening, Samfällighetsförening, Stiftelse\./)
     expect(body).not.toMatch(/Only `aktiebolag` and `enskild_firma`/)
   })
 
   it('moves ideell förening into the creatable list when the flag is on', () => {
     vi.stubEnv('NEXT_PUBLIC_IDEELL_FORENING_ENABLED', 'true')
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', '')
     const body = onboardingSkill.body
     expect(body).toContain('`ideell_forening` (Ideell förening)')
-    expect(body).toMatch(/Not yet: Ekonomisk förening, Bostadsrättsförening, Samfällighetsförening, Stiftelse\./)
+    expect(body).toMatch(/Not yet: Kommanditbolag, Ekonomisk förening, Bostadsrättsförening, Samfällighetsförening, Stiftelse\./)
+  })
+
+  it('moves kommanditbolag into the creatable list when its flag is on', () => {
+    vi.stubEnv('NEXT_PUBLIC_IDEELL_FORENING_ENABLED', '')
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', 'true')
+    const body = onboardingSkill.body
+    expect(body).toContain('`kommanditbolag` (Kommanditbolag)')
+    expect(body).toMatch(/Not yet: Ideell förening, Ekonomisk förening, Bostadsrättsförening, Samfällighetsförening, Stiftelse\./)
   })
 
   it('tells the agent to stop on a not-yet form rather than register another one', () => {

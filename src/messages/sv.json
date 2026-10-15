@@ -179,7 +179,15 @@
     "cta_secondary": "Fortsätt utan"
   },
   "agent_chat": {
-    "assistant_unavailable": "Assistenten kan inte köras med den AI-leverantör som är konfigurerad på den här installationen."
+    "assistant_unavailable": "Assistenten kan inte köras med den AI-leverantör som är konfigurerad på den här installationen.",
+    "attach_button": "Bifoga kvitto eller faktura",
+    "attach_list_label": "Bifogade filer",
+    "attach_uploading": "laddar upp",
+    "attach_remove": "Ta bort {name}",
+    "attach_unsupported_type": "Filtypen stöds inte. Bifoga en PDF eller en bild (JPEG, PNG, WebP eller HEIC).",
+    "attach_too_large": "Filen är större än {max} MB.",
+    "attach_failed": "Uppladdningen misslyckades. Försök igen.",
+    "attach_too_many": "Du kan bifoga högst {max} filer per meddelande."
   },
   "agentKnowledge": {
     "load_error_title": "Kunde inte läsa in kunskapsprofilen",
@@ -1660,10 +1668,12 @@
     "journey_form_title": "Vilken företagsform har ni?",
     "journey_form_info": "Aktiebolag har ett eget organisationsnummer från Bolagsverket. Enskild firma använder ditt personnummer.",
     "journey_form_info_forening": "Ideell förening har ett organisationsnummer från Skatteverket.",
+    "journey_form_info_kb": "Kommanditbolag har ett organisationsnummer från Bolagsverket. Delägarna beskattas för bolagets resultat.",
     "journey_form_info_tail": "Företagsformen avgör reglerna för räkenskapsår och skatt.",
     "journey_form_ab": "Aktiebolag",
     "journey_form_ef": "Enskild firma",
     "journey_form_forening": "Ideell förening (beta)",
+    "journey_form_kb": "Kommanditbolag (beta)",
     "journey_form_planned_group": "Förening eller annan form",
     "journey_form_more_pre": "{form}? Ange organisationsnumret så hittar vi den, eller",
     "journey_form_more_link": "välj {form}",
@@ -2773,6 +2783,7 @@
     "entity_enskild_firma": "Enskild firma",
     "entity_aktiebolag": "Aktiebolag",
     "entity_ideell_forening": "Ideell förening",
+    "entity_kommanditbolag": "Kommanditbolag",
     "toast_fetch_failed": "Kunde inte hämta mallar",
     "toast_delete_failed": "Kunde inte ta bort mall",
     "toast_deleted": "Mall borttagen",
@@ -2886,6 +2897,7 @@
     "entity_aktiebolag": "Aktiebolag",
     "entity_enskild_firma": "Enskild firma",
     "entity_ideell_forening": "Ideell förening",
+    "entity_kommanditbolag": "Kommanditbolag",
     "entity_form_help": "Företagsform kan inte ändras. Kontakta support vid behov.",
     "tax_vat_heading": "Skatt & moms",
     "f_skatt_label": "F-skattsedel",

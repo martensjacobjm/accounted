@@ -9,6 +9,7 @@ import {
   fiscalYearLockedToCalendar,
   isEntityType,
   isEntityTypeCreatable,
+  ownerBearsIncomeTax,
   ownerSettlementAccount,
   parseEntityType,
   preparesArsredovisning,
@@ -27,8 +28,8 @@ function stubSupabase(companyRow: { entity_type: string } | null, error: { messa
 }
 
 describe('entity-type: parsing', () => {
-  it('lists the three supported forms', () => {
-    expect([...ENTITY_TYPES]).toEqual(['enskild_firma', 'aktiebolag', 'ideell_forening'])
+  it('lists the four supported forms', () => {
+    expect([...ENTITY_TYPES]).toEqual(['enskild_firma', 'aktiebolag', 'ideell_forening', 'kommanditbolag'])
   })
 
   it('narrows known values and rejects everything else', () => {
@@ -42,10 +43,10 @@ describe('entity-type: parsing', () => {
   })
 
   it('byEntityType refuses a corrupt value at runtime', () => {
-    expect(byEntityType('ideell_forening', { enskild_firma: 1, aktiebolag: 2, ideell_forening: 3 })).toBe(3)
-    expect(() =>
-      byEntityType('stiftelse' as never, { enskild_firma: 1, aktiebolag: 2, ideell_forening: 3 }),
-    ).toThrow(UnknownEntityTypeError)
+    const arms = { enskild_firma: 1, aktiebolag: 2, ideell_forening: 3, kommanditbolag: 4 }
+    expect(byEntityType('ideell_forening', arms)).toBe(3)
+    expect(byEntityType('kommanditbolag', arms)).toBe(4)
+    expect(() => byEntityType('stiftelse' as never, arms)).toThrow(UnknownEntityTypeError)
   })
 })
 
@@ -101,6 +102,28 @@ describe('entity-type: domain facts', () => {
     expect(ownerSettlementAccount('ideell_forening', 'contribution')).toBe('2890')
   })
 
+  it('books a kommanditbolag delägare on 2013/2018 and closes the year to 2019, carried to 2010', () => {
+    expect(ownerSettlementAccount('kommanditbolag', 'withdrawal')).toBe('2013')
+    expect(ownerSettlementAccount('kommanditbolag', 'contribution')).toBe('2018')
+    expect(resultClosingAccounts('kommanditbolag')).toEqual({
+      closing: '2019',
+      closingName: 'Årets resultat, delägare 1',
+      priorYearCarry: '2010',
+    })
+    expect(preparesArsredovisning('kommanditbolag')).toBe(false)
+    expect(fiscalYearLockedToCalendar('kommanditbolag')).toBe(true)
+    expect(usesPersonnummerAsOrgNumber('kommanditbolag')).toBe(false)
+    expect(defaultAccountingMethod('kommanditbolag')).toBe('accrual')
+    expect(simplifiedYearEndRegelverk('kommanditbolag')).toBe('K2')
+  })
+
+  it('taxes the income on the owners for an EF and a KB, never for an AB or a förening', () => {
+    expect(ownerBearsIncomeTax('enskild_firma')).toBe(true)
+    expect(ownerBearsIncomeTax('kommanditbolag')).toBe(true)
+    expect(ownerBearsIncomeTax('aktiebolag')).toBe(false)
+    expect(ownerBearsIncomeTax('ideell_forening')).toBe(false)
+  })
+
   it('keeps the form-specific defaults', () => {
     expect(preparesArsredovisning('aktiebolag')).toBe(true)
     expect(preparesArsredovisning('ideell_forening')).toBe(false)
@@ -122,6 +145,7 @@ describe('entity-type: creation flag', () => {
 
   it('hides ideell_forening until the flag is on', () => {
     vi.stubEnv('NEXT_PUBLIC_IDEELL_FORENING_ENABLED', '')
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', '')
     expect(isEntityTypeCreatable('ideell_forening')).toBe(false)
     expect(isEntityTypeCreatable('aktiebolag')).toBe(true)
     expect(creatableEntityTypes()).toEqual(['enskild_firma', 'aktiebolag'])
@@ -129,7 +153,17 @@ describe('entity-type: creation flag', () => {
 
   it('offers ideell_forening when the flag is on', () => {
     vi.stubEnv('NEXT_PUBLIC_IDEELL_FORENING_ENABLED', 'true')
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', '')
     expect(isEntityTypeCreatable('ideell_forening')).toBe(true)
     expect(creatableEntityTypes()).toEqual(['enskild_firma', 'aktiebolag', 'ideell_forening'])
+  })
+
+  it('hides kommanditbolag until its own flag is on', () => {
+    vi.stubEnv('NEXT_PUBLIC_IDEELL_FORENING_ENABLED', '')
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', '')
+    expect(isEntityTypeCreatable('kommanditbolag')).toBe(false)
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', 'true')
+    expect(isEntityTypeCreatable('kommanditbolag')).toBe(true)
+    expect(creatableEntityTypes()).toEqual(['enskild_firma', 'aktiebolag', 'kommanditbolag'])
   })
 })

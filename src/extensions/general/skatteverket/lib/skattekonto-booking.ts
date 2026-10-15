@@ -1,5 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { resolveCompanyEntityType } from '@/lib/company/entity-type'
+import {
+  ownerBearsIncomeTax,
+  resolveCompanyEntityType,
+  usesPersonnummerAsOrgNumber,
+} from '@/lib/company/entity-type'
 import { commitEntry, createDraftEntry, findFiscalPeriod } from '@/lib/bookkeeping/engine'
 import { getEarliestFiscalPeriodStart } from '@/lib/core/bookkeeping/period-service'
 import { getBASReference } from '@/lib/bookkeeping/bas-reference'
@@ -170,19 +174,25 @@ function matchSkattekontoRule(
 
     if (!patterns.some(p => normalized.includes(p))) continue
 
-    // Employer gate: the rule matched, but for a non-employer EF the safe
-    // outcome is NO counter account (manual review or ignore), never 2710.
-    // An AB, and an employer-registered EF, keep the rule's account.
+    // Employer gate: the rule matched, but when the skattekonto is the
+    // owner's personal one (an EF, whose org number is the personnummer) and
+    // the firm is not an employer, the safe outcome is NO counter account
+    // (manual review or ignore), never 2710. A company with its own
+    // organisationsnummer, and an employer-registered EF, keep the rule's
+    // account.
     if (
       rule.requires_employer &&
-      entityType === 'enskild_firma' &&
+      usesPersonnummerAsOrgNumber(entityType) &&
       !employerRegistered
     ) {
       return { kind: 'employer_gated' }
     }
 
+    // counter_account_ef is the owner-taxed column: income tax on a company
+    // whose income is taxed on its owners (EF, KB) is the owner's tax, an
+    // eget uttag (2013), never the company's own skatteskuld (2510).
     const account =
-      entityType === 'enskild_firma' && rule.counter_account_ef
+      ownerBearsIncomeTax(entityType) && rule.counter_account_ef
         ? rule.counter_account_ef
         : rule.counter_account
 

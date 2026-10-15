@@ -40,12 +40,23 @@ const IDEELL_FORENING_VALUES = new Set<string>([
   'ideella föreningar',
 ])
 
+/**
+ * Kommanditbolag. Handelsbolag is NOT mapped: it has no profile yet, and
+ * provisioning it as a kommanditbolag would name the wrong form in every
+ * filing even though the equity accounts would match.
+ */
+const KOMMANDITBOLAG_VALUES = new Set<string>([
+  'kb',
+  'kommanditbolag',
+])
+
 export function mapEntityType(ticType: string | null | undefined): EntityType | null {
   if (!ticType) return null
   const normalized = ticType.trim().toLowerCase()
   if (AKTIEBOLAG_VALUES.has(normalized)) return 'aktiebolag'
   if (ENSKILD_FIRMA_VALUES.has(normalized)) return 'enskild_firma'
   if (IDEELL_FORENING_VALUES.has(normalized)) return 'ideell_forening'
+  if (KOMMANDITBOLAG_VALUES.has(normalized)) return 'kommanditbolag'
   return null
 }
 

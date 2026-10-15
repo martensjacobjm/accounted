@@ -51,7 +51,9 @@ describe('ideell_forening: CHECK constraints', () => {
 
   it('supported_entity_types() is the list the RPCs validate against', async () => {
     const res = await getPool().query<{ list: string[] }>(`SELECT public.supported_entity_types() AS list`)
-    expect(res.rows[0].list).toEqual(['enskild_firma', 'aktiebolag', 'ideell_forening'])
+    // Later forms (20261015120000 kommanditbolag) extend the list; the exact
+    // list is pinned against ENTITY_TYPES in legal-form-profiles.pg.test.ts.
+    expect(res.rows[0].list).toEqual(expect.arrayContaining(['enskild_firma', 'aktiebolag', 'ideell_forening']))
   })
 })
 

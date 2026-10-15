@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { ENTITY_TYPES } from '@/lib/company/entity-type'
+import { ENTITY_TYPES, fiscalYearLockedToCalendar } from '@/lib/company/entity-type'
 import { normaliseSwish, isValidSwish } from '@/lib/payments/swish'
 import { normalizeVatNumber } from '@/lib/vat/vat-number'
 import {
@@ -2825,14 +2825,18 @@ export const UpdateSettingsSchema = z.object({
   },
 ).refine(
   (data) => {
-    // BFL 3 kap.: Enskild firma must have fiscal year starting January
-    if (data.entity_type === 'enskild_firma' && data.fiscal_year_start_month !== undefined) {
+    // BFL 3 kap. 1 §: a form bound to the calendar year must start in January
+    if (
+      data.entity_type !== undefined &&
+      fiscalYearLockedToCalendar(data.entity_type) &&
+      data.fiscal_year_start_month !== undefined
+    ) {
       return data.fiscal_year_start_month === 1
     }
     return true
   },
   {
-    message: 'Enskild firma must have fiscal year starting in January (BFL 3 kap.)',
+    message: 'This legal form must have its fiscal year starting in January (BFL 3 kap.)',
     path: ['fiscal_year_start_month'],
   }
 )
@@ -4216,8 +4220,9 @@ export const CreateExpenseClaimSchema = z
       message: 'Kostnadskontot måste vara ett resultatkonto (klass 4-8)',
     }),
     /** Fork: the owner's counter account when the entity default is wrong for
-     *  the person (a delägare in a KB run in AB mode books 2018, not 2893).
-     *  Ignored for employees (always 2820). */
+     *  the person (the form default is ownerSettlementAccount: 2018 for an EF
+     *  or KB, 2893 for an AB, 2890 for a förening; a KB still registered as
+     *  an AB books 2018 here, not 2893). Ignored for employees (always 2820). */
     liability_account: z.enum(['2893', '2018', '2890']).optional(),
     employee_id: uuid.optional().nullable(),
     claimant_name: z.string().trim().max(200).optional(),

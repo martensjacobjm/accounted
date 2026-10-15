@@ -237,3 +237,46 @@ describe('CompanySetupSchema: ideell_forening', () => {
     expect(plan.input.entityType).toBe('ideell_forening')
   })
 })
+
+describe('CompanySetupSchema: kommanditbolag', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  const kb = {
+    name: 'Test Kommanditbolag',
+    entity_type: 'kommanditbolag',
+    org_number: '9696000000',
+    vat_registered: false,
+    f_skatt: true,
+  }
+
+  it('is refused while the creation flag is off', () => {
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', '')
+    const result = CompanySetupSchema.safeParse(kb)
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues.map((i) => i.path.join('.'))).toContain('entity_type')
+    }
+  })
+
+  it('defaults to accrual and forces the calendar year once enabled', () => {
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', 'true')
+    const plan = planCompanySetup(CompanySetupSchema.parse({ ...kb, fiscal_year_start_month: 7 }))
+    expect(plan.ok).toBe(true)
+    if (!plan.ok) return
+    expect(plan.resolved).toEqual({ accountingMethod: 'accrual', accountingMethodDefaulted: true })
+    expect(plan.input.settings.fiscal_year_start_month).toBe(1)
+    expect(plan.input.entityType).toBe('kommanditbolag')
+  })
+
+  it('refuses a first fiscal year that does not end on 31 December', () => {
+    vi.stubEnv('NEXT_PUBLIC_KOMMANDITBOLAG_ENABLED', 'true')
+    const result = CompanySetupSchema.safeParse({ ...kb, first_fiscal_year: { start: '2025-04-10', end: '2026-03-31' } })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      const issue = result.error.issues.find((i) => i.path.join('.') === 'first_fiscal_year.end')
+      expect(issue?.message).toContain('kommanditbolag always closes')
+    }
+  })
+})

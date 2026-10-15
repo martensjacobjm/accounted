@@ -12,6 +12,13 @@ import { guardSandbox } from '@/lib/sandbox/guard'
 import { requireCapability } from '@/lib/entitlements/has-capability'
 import { CAPABILITY } from '@/lib/entitlements/keys'
 import { getErrorMessage as getUserErrorMessage } from '@/lib/errors/get-error-message'
+import {
+  ATTACHMENT_ONLY_MESSAGE,
+  CHAT_ATTACHMENT_INTENTS,
+  MAX_CHAT_ATTACHMENTS,
+  type ChatAttachmentRef,
+} from '@/lib/agent/chat/attachment-block'
+import { resolveChatAttachments } from '@/lib/agent/chat/attachments'
 
 // Make sure extensions are loaded: the chat loop dispatches against the
 // agent tool registry which is populated by the mcp-server extension at load.
@@ -67,6 +74,10 @@ const BodySchema = z.object({
   // rejection-correction flow (ApprovalCard → AgentChat) to feed the agent a
   // synthetic correction without showing it as something the user typed.
   user_message_hidden: z.boolean().nullable().optional(),
+  // Receipts and invoices attached in the composer: ids of documents the
+  // chat already uploaded through the document inbox. Only ids travel here;
+  // the route resolves them against the active company before the turn runs.
+  attachment_document_ids: z.array(z.string().uuid()).max(MAX_CHAT_ATTACHMENTS).nullable().optional(),
 })
 
 // POST /api/agent/invoke
@@ -174,6 +185,25 @@ export async function POST(request: Request) {
     }
   }
 
+  // Attachments resolve BEFORE any write below for the same reason: a turn
+  // that references a document the company cannot see is rejected without
+  // creating a conversation row.
+  let attachments: ChatAttachmentRef[] = []
+  const attachmentIds = body.attachment_document_ids ?? []
+  if (attachmentIds.length > 0) {
+    if (!CHAT_ATTACHMENT_INTENTS.has(intent.id)) {
+      return NextResponse.json(
+        { error: 'Bilagor stöds inte i den här konversationen.' },
+        { status: 400 },
+      )
+    }
+    const resolved = await resolveChatAttachments(supabase, companyId, attachmentIds)
+    if (!resolved.ok) {
+      return NextResponse.json({ error: resolved.message }, { status: resolved.status })
+    }
+    attachments = resolved.attachments
+  }
+
   // onboarding.intake completion signal: once the user has actually
   // engaged (typed a real reply, not the auto-fired greeting prompt that
   // mounts the chat), stamp intake_completed_at on the profile so re-entry
@@ -233,6 +263,11 @@ export async function POST(request: Request) {
   // pipeline so the prompt is anchored on the page context the user
   // clicked from.
   let effectiveUserMessage = body.user_message ?? ''
+  // Attachments without typed text are still the user's turn, never the
+  // first-turn template: the template path would drop the attachments.
+  if (attachments.length > 0 && effectiveUserMessage.trim().length === 0) {
+    effectiveUserMessage = ATTACHMENT_ONLY_MESSAGE
+  }
   // When the caller didn't supply a user_message, we synthesize one from the
   // intent's promptTemplate. Mark that synthetic turn hidden so the UI
   // doesn't render the template scaffolding as a user bubble on resume. The
@@ -305,6 +340,7 @@ export async function POST(request: Request) {
           conversationId: convId,
           userMessage: effectiveUserMessage,
           userMessageHidden,
+          attachments,
           persist: true,
           preloadedProfileSummary,
           emit: (event) => emit(event),

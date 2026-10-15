@@ -28,6 +28,13 @@ import type { StoredStagedOperation } from '@/types'
 import type { AgentStatusEvent } from './agent-status'
 import { sendFeedback, type FeedbackSentiment } from './feedback-client'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  CHAT_ATTACHMENT_INTENTS,
+  splitAttachmentBlock,
+  type ChatAttachmentChip,
+} from '@/lib/agent/chat/attachment-block'
+import { useChatAttachments } from './useChatAttachments'
+import { ChatAttachButton, ComposerAttachmentList, MessageAttachmentList } from './ChatAttachmentControls'
 
 // New messages arrive one at a time, so they enter on the short bubble curve.
 // The whole loaded history must NOT: `.animate-slide-up` is the 500ms
@@ -115,6 +122,8 @@ function useMarkdownReady(): boolean {
 export interface ChatMessage {
   role: 'user' | 'assistant'
   text: string
+  // Files the user attached to this message (user role only).
+  attachments?: ChatAttachmentChip[]
   // Extended-thinking reasoning, streamed token-by-token via reasoning_delta.
   // Shown in a collapsible "Tänkte…" block. Stream-time only: not hydrated.
   reasoning?: string
@@ -258,6 +267,10 @@ export default function AgentChat({
   const assistantAvailable = useAssistantAvailable()
   const tChat = useTranslations('agent_chat')
   const [input, setInput] = useState('')
+  // Receipts and invoices attached in the composer; only intents that can
+  // read them offer the button (the invoke route enforces the same set).
+  const attachmentsEnabled = CHAT_ATTACHMENT_INTENTS.has(intentId)
+  const attach = useChatAttachments(attachmentsEnabled)
   const [streaming, setStreaming] = useState(false)
   // Turn boundaries for the status channel are derived from the streaming flag
   // rather than published at each call site: a turn can end by completing,
@@ -390,6 +403,8 @@ export default function AgentChat({
     // hidden so it never renders as a user bubble (e.g. a rejection correction
     // fed back into the chat). The caller also skips adding a visible bubble.
     hidden?: boolean
+    // Document ids of files attached to this turn (already uploaded).
+    attachmentDocumentIds?: string[]
     // Resolves false when the turn never reached the server (network error or
     // a non-2xx), so the caller can hand the user's text back to the composer
     // instead of stranding a bubble that was never persisted.
@@ -422,6 +437,10 @@ export default function AgentChat({
           conversation_id: body.conversationId,
           user_message: body.userMessage,
           user_message_hidden: body.hidden ?? false,
+          attachment_document_ids:
+            body.attachmentDocumentIds && body.attachmentDocumentIds.length > 0
+              ? body.attachmentDocumentIds
+              : undefined,
         }),
         signal,
       })
@@ -609,7 +628,11 @@ export default function AgentChat({
       }
 
       setMessages((prev) => prev.slice(0, lastUserIdx + 1))
-      void startTurn({ conversationId, userMessage: userMsg.text })
+      void startTurn({
+        conversationId,
+        userMessage: userMsg.text,
+        attachmentDocumentIds: userMsg.attachments?.map((a) => a.documentId),
+      })
     })()
   }
 
@@ -792,20 +815,32 @@ export default function AgentChat({
 
   async function handleSend() {
     const text = input.trim()
-    if (!text || streaming) return
+    const files = attach.ready
+    // Wait for uploads in flight: sending now would silently leave them out.
+    if ((!text && files.length === 0) || streaming || attach.uploading) return
     setInput('')
-    setMessages((prev) => [...prev, { role: 'user', text }])
-    const ok = await startTurn({ conversationId, userMessage: text })
+    attach.clear()
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', text, ...(files.length > 0 ? { attachments: files } : {}) },
+    ])
+    const ok = await startTurn({
+      conversationId,
+      userMessage: text,
+      attachmentDocumentIds: files.map((f) => f.documentId),
+    })
     if (!ok) {
       // The turn never reached the server, so nothing was persisted and the
-      // dangling user bubble would vanish on reload. Put the text back in the
-      // composer instead of making the user retype it, and drop the bubble so
-      // what is on screen matches what was actually sent.
+      // dangling user bubble would vanish on reload. Put the text and the
+      // attachments back in the composer instead of making the user redo
+      // them, and drop the bubble so what is on screen matches what was
+      // actually sent.
       setMessages((prev) => {
         const last = prev[prev.length - 1]
         return last?.role === 'user' && last.text === text ? prev.slice(0, -1) : prev
       })
       setInput((current) => (current.length > 0 ? current : text))
+      if (files.length > 0) attach.restore(files)
     }
   }
 
@@ -946,13 +981,23 @@ export default function AgentChat({
         // padding-bottom = base 1rem + safe-area-inset-bottom on phones so
         // the iOS home indicator / Android gesture bar doesn't overlap the
         // input.
-        className="border-t border-border px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1rem)]"
+        className={cn(
+          'border-t border-border px-5 pt-4 pb-[calc(env(safe-area-inset-bottom,0px)+1rem)] transition-colors',
+          attach.dragActive && 'bg-secondary/60',
+        )}
         onSubmit={(e) => {
           e.preventDefault()
           void handleSend()
         }}
+        {...(attachmentsEnabled ? attach.dropZoneProps : {})}
       >
+        {attachmentsEnabled && (
+          <ComposerAttachmentList items={attach.items} notice={attach.notice} onRemove={attach.remove} />
+        )}
         <div className="flex items-end gap-2">
+          {attachmentsEnabled && (
+            <ChatAttachButton onFiles={attach.addFiles} disabled={streaming} />
+          )}
           <textarea
             ref={textareaRef}
             value={input}
@@ -984,7 +1029,7 @@ export default function AgentChat({
             <Button
               type="submit"
               size="icon"
-              disabled={input.trim().length === 0}
+              disabled={(input.trim().length === 0 && attach.ready.length === 0) || attach.uploading}
               aria-label="Skicka"
             >
               <Send className="h-4 w-4" />
@@ -1024,7 +1069,9 @@ function MessageBubble({
   // but no answer text yet), the ReasoningBlock is the activity indicator, so
   // suppress the empty cursor bubble underneath it.
   const isThinking = !isUser && streamingTail && !message.text && !!message.reasoning
-  const hideEmptyBubble = (!isUser && !message.text && !streamingTail) || isThinking
+  const hasAttachments = isUser && !!message.attachments && message.attachments.length > 0
+  const hideEmptyBubble =
+    (!isUser && !message.text && !streamingTail) || isThinking || (hasAttachments && !message.text)
   const markdownLoaded = useMarkdownReady()
   return (
     <div
@@ -1033,6 +1080,7 @@ function MessageBubble({
       {!isUser && message.reasoning && (
         <ReasoningBlock reasoning={message.reasoning} active={isThinking} />
       )}
+      {hasAttachments && <MessageAttachmentList attachments={message.attachments ?? []} />}
       {!hideEmptyBubble && (
       <div
         className={cn(
@@ -1460,8 +1508,19 @@ export function normalizeStoredMessages(
         toolCalls.push({ tool_use_id: block.id, name: block.name, completed: true })
       }
     }
+    if (r.role !== 'assistant') {
+      // A user turn with attachments was stored with its attachment block
+      // (run-turn); show the typed text and the files as chips instead.
+      const split = splitAttachmentBlock(text)
+      out.push({
+        role: 'user',
+        text: split.text,
+        ...(split.attachments.length > 0 ? { attachments: split.attachments } : {}),
+      })
+      continue
+    }
     out.push({
-      role: r.role === 'assistant' ? 'assistant' : 'user',
+      role: 'assistant',
       text,
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
     })

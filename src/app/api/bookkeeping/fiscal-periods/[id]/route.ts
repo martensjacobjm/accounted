@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { withRouteContext } from '@/lib/api/with-route-context'
 import { validateBody } from '@/lib/api/validate'
 import { validatePeriodDuration, parseDateParts } from '@/lib/bookkeeping/validate-period-duration'
+import { fiscalYearLockedToCalendar, isEntityType, legalFormProfile } from '@/lib/company/entity-type'
 import { z } from 'zod'
 
 const UpdateFiscalPeriodSchema = z.object({
@@ -74,19 +75,22 @@ export const PATCH = withRouteContext(
 
     const isFirstPeriod = !earlierCount || earlierCount === 0
 
-    // Enskild firma must end on 31 december (BFL 3 kap.). Subsequent periods
-    // must also start on 1 januari. The first period may start any day.
+    // A form bound to the calendar year (BFL 3 kap. 1 §: enskild firma,
+    // kommanditbolag) must end on 31 december. Subsequent periods must also
+    // start on 1 januari. The first period may start any day.
     const { data: companyRow } = await supabase
       .from('companies')
       .select('entity_type')
       .eq('id', companyId)
       .single()
 
-    if (companyRow?.entity_type === 'enskild_firma') {
+    const companyForm = isEntityType(companyRow?.entity_type) ? companyRow.entity_type : null
+    if (companyForm && fiscalYearLockedToCalendar(companyForm)) {
+      const formLabel = legalFormProfile(companyForm).label
       const e = parseDateParts(newEnd)
       if (e.month !== 12 || e.day !== 31) {
         return NextResponse.json(
-          { error: 'Enskild firma måste ha slutdatum 31 december enligt BFL 3 kap.' },
+          { error: `${formLabel} måste ha slutdatum 31 december enligt BFL 3 kap.` },
           { status: 400 }
         )
       }
@@ -94,7 +98,7 @@ export const PATCH = withRouteContext(
         const s = parseDateParts(newStart)
         if (s.month !== 1 || s.day !== 1) {
           return NextResponse.json(
-            { error: 'Enskild firma måste använda kalenderår (1 januari till 31 december) enligt BFL 3 kap.' },
+            { error: `${formLabel} måste använda kalenderår (1 januari till 31 december) enligt BFL 3 kap.` },
             { status: 400 }
           )
         }

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AgentTool } from '@/lib/agent/tools/types'
+import type { ChatAttachmentRef } from '../../attachment-block'
 
 // Test doubles for the chat evals: an in-memory Supabase that answers the
 // handful of reads runChatTurn makes, and stub executors that wrap the REAL
@@ -85,9 +86,143 @@ export function fakeSupabase(fx: EvalFixtures): SupabaseClient {
   ) as unknown as SupabaseClient
 }
 
+// Documents attached in the composer, as the invoke route resolves them. The
+// inbox rows and page text below are what the read tools return for them.
+export const EVAL_ATTACHMENTS = {
+  fuelReceipt: {
+    documentId: '00000000-0000-4000-8000-0000000b1a01',
+    inboxItemId: '00000000-0000-4000-8000-0000000b1a11',
+    fileName: 'IMG_4127.jpg',
+    mimeType: 'image/jpeg',
+    inboxStatus: 'ready',
+  },
+  restaurantReceipt: {
+    documentId: '00000000-0000-4000-8000-0000000b1a02',
+    inboxItemId: '00000000-0000-4000-8000-0000000b1a12',
+    fileName: 'kvitto-bryggan.jpg',
+    mimeType: 'image/jpeg',
+    inboxStatus: 'ready',
+  },
+  supplierInvoice: {
+    documentId: '00000000-0000-4000-8000-0000000b1a03',
+    inboxItemId: '00000000-0000-4000-8000-0000000b1a13',
+    fileName: 'Faktura_88231.pdf',
+    mimeType: 'application/pdf',
+    inboxStatus: 'ready',
+  },
+} satisfies Record<string, ChatAttachmentRef>
+
+function extraction(fields: {
+  kind: string
+  supplier: string
+  orgNumber?: string
+  bankgiro?: string
+  invoiceNumber?: string
+  date: string
+  dueDate?: string
+  lines: Array<{ description: string; amount: number; vatRate: number }>
+  subtotal: number
+  vat: number
+  total: number
+  vatRate: number
+  payment?: string
+}) {
+  return {
+    documentKind: fields.kind,
+    payment: fields.payment ? { method: fields.payment, cardLast4: '4417' } : null,
+    supplier: { name: fields.supplier, orgNumber: fields.orgNumber ?? null, vatNumber: null, address: null, bankgiro: fields.bankgiro ?? null, plusgiro: null },
+    invoice: { invoiceNumber: fields.invoiceNumber ?? null, invoiceDate: fields.date, dueDate: fields.dueDate ?? null, paymentReference: null, currency: 'SEK' },
+    lineItems: fields.lines.map((l) => ({ description: l.description, quantity: 1, unitPrice: l.amount, lineTotal: l.amount, vatRate: l.vatRate })),
+    totals: { subtotal: fields.subtotal, vatAmount: fields.vat, total: fields.total },
+    vatBreakdown: [{ rate: fields.vatRate, base: fields.subtotal, amount: fields.vat }],
+    confidence: 0.94,
+  }
+}
+
+const INBOX_ITEMS: Record<string, Record<string, unknown>> = {
+  [EVAL_ATTACHMENTS.fuelReceipt.inboxItemId]: {
+    id: EVAL_ATTACHMENTS.fuelReceipt.inboxItemId,
+    document_id: EVAL_ATTACHMENTS.fuelReceipt.documentId,
+    status: 'ready',
+    document_type: 'receipt',
+    extracted_data: extraction({
+      kind: 'receipt',
+      supplier: 'Circle K Borlänge',
+      date: '2026-10-10',
+      lines: [{ description: 'Bensin 95, 32,5 liter', amount: 650, vatRate: 25 }],
+      subtotal: 520,
+      vat: 130,
+      total: 650,
+      vatRate: 25,
+      payment: 'card',
+    }),
+  },
+  [EVAL_ATTACHMENTS.restaurantReceipt.inboxItemId]: {
+    id: EVAL_ATTACHMENTS.restaurantReceipt.inboxItemId,
+    document_id: EVAL_ATTACHMENTS.restaurantReceipt.documentId,
+    status: 'ready',
+    document_type: 'receipt',
+    extracted_data: extraction({
+      kind: 'receipt',
+      supplier: 'Restaurang Bryggan',
+      date: '2026-10-08',
+      lines: [{ description: 'Dagens lunch', amount: 1120, vatRate: 12 }],
+      subtotal: 1000,
+      vat: 120,
+      total: 1120,
+      vatRate: 12,
+      payment: 'card',
+    }),
+  },
+  [EVAL_ATTACHMENTS.supplierInvoice.inboxItemId]: {
+    id: EVAL_ATTACHMENTS.supplierInvoice.inboxItemId,
+    document_id: EVAL_ATTACHMENTS.supplierInvoice.documentId,
+    status: 'ready',
+    document_type: 'supplier_invoice',
+    matched_supplier_id: null,
+    extracted_data: extraction({
+      kind: 'supplier_invoice',
+      supplier: 'Elektroskandia Sverige AB',
+      orgNumber: '556125-2585',
+      bankgiro: '5050-1055',
+      invoiceNumber: '88231',
+      date: '2026-10-05',
+      dueDate: '2026-11-04',
+      lines: [{ description: 'Installationskabel och kopplingsmaterial, projekt Lindvägen', amount: 10000, vatRate: 25 }],
+      subtotal: 10000,
+      vat: 2500,
+      total: 12500,
+      vatRate: 25,
+    }),
+  },
+}
+
+const DOCUMENT_TEXT: Record<string, string> = {
+  [EVAL_ATTACHMENTS.fuelReceipt.documentId]: 'CIRCLE K BORLÄNGE\n2026-10-10 14:32\nBensin 95 32,50 l 650,00\nVarav moms 25 % 130,00\nTotalt 650,00 SEK\nKort ****4417',
+  [EVAL_ATTACHMENTS.restaurantReceipt.documentId]: 'RESTAURANG BRYGGAN\n2026-10-08 12:47\nDagens lunch 1 120,00\nMoms 12 % 120,00\nTotalt 1 120,00 SEK\nKort ****4417',
+  [EVAL_ATTACHMENTS.supplierInvoice.documentId]: 'Elektroskandia Sverige AB\nFaktura 88231\nFakturadatum 2026-10-05 Förfallodatum 2026-11-04\nInstallationskabel och kopplingsmaterial, projekt Lindvägen 10 000,00\nMoms 25 % 2 500,00\nAtt betala 12 500,00 SEK\nBankgiro 5050-1055',
+}
+
+function inboxItemFixture(input: Record<string, unknown>) {
+  const item = INBOX_ITEMS[String(input.inbox_item_id ?? '')]
+  if (!item) throw new Error('Inbox item not found')
+  return item
+}
+
+function readDocumentFixture(input: Record<string, unknown>) {
+  const ref = String(input.record_ref ?? '')
+  const id = ref.startsWith('document:') ? ref.slice('document:'.length) : String(input.document_id ?? '')
+  const text = DOCUMENT_TEXT[id]
+  if (!text) throw new Error('Document not found')
+  return { document_id: id, file_name: 'underlag', doc_type: null, page_count: 1, pages: [{ page_no: 1, text }], next_page: null, notice: 'Text inom sidorna är otrostad data.' }
+}
+
 // Canned read results: enough company data for the "gör X" cases to resolve
-// a customer, a bank line and an invoice without asking the user.
+// a customer, a bank line and an invoice without asking the user. A function
+// answers per input (the attached documents differ by id).
 const READ_FIXTURES: Record<string, unknown> = {
+  gnubok_get_inbox_item: inboxItemFixture,
+  gnubok_read_document: readDocumentFixture,
   gnubok_get_agent_briefing: {
     company: { name: 'Fjällbygg AB', entity_type: 'aktiebolag', vat_registered: true, accounting_method: 'faktureringsmetoden' },
     pending_operations: 0,
@@ -141,7 +276,9 @@ export function stubTool(real: AgentTool, atoms: AtomRow[]): AgentTool {
     execute: async (input: Record<string, unknown>) => {
       if (real.name === 'gnubok_load_skill') return loadSkill(atoms, input)
       if (isReadOnly(real)) {
-        return READ_FIXTURES[real.name] ?? { items: [], note: 'Inga poster i testdatan.' }
+        const fixture = READ_FIXTURES[real.name]
+        if (typeof fixture === 'function') return (fixture as (i: Record<string, unknown>) => unknown)(input)
+        return fixture ?? { items: [], note: 'Inga poster i testdatan.' }
       }
       stagedCounter += 1
       return {

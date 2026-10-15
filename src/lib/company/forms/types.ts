@@ -34,7 +34,7 @@ export interface LegalFormProfile {
     orgId: 'personnummer' | 'organisationsnummer'
   }
   fiscalYear: {
-    /** BFL 3 kap 1 §: a fysisk person is bound to the calendar year. */
+    /** BFL 3 kap 1 §: a fysisk person, and a handelsbolag taxed through one, is bound to the calendar year. */
     calendarOnly: boolean
   }
   bookkeeping: {
@@ -55,7 +55,7 @@ export interface LegalFormProfile {
     priorYearCarry: string | null
     /** Whether someone owns the company (egna uttag, aktieägare). A förening has members, not owners. */
     hasOwners: boolean
-    /** Money settled with the owner or member: EF 2013/2018, AB 2893, förening 2890. */
+    /** Money settled with the owner or member: EF and KB 2013/2018, AB 2893, förening 2890. */
     settlement: { withdrawal: string; contribution: string }
   }
   filings: {

@@ -116,6 +116,7 @@ const ATOM_INDEX: AtomRegistryIndexRow[] = [
   atom('horizontal/swedish-tax-planning', 'horizontal'),
   atom('modifier/single-shareholder-ab-fmb', 'modifier'),
   atom('modifier/enskild-firma', 'modifier'),
+  atom('horizontal/swedish-hb-kb-beskattning', 'horizontal'),
 ]
 
 describe('fallbackAtomSelection by capability', () => {
@@ -153,6 +154,28 @@ describe('fallbackAtomSelection by capability', () => {
     ])
     expect(sel.modifier_atoms).toEqual([])
     expect(sel.verification_questions).not.toContain('Är du ensamägare till företaget?')
+  })
+
+  it('gives a kommanditbolag the HB/KB atom and neither the AB atoms nor an owner modifier', () => {
+    const sel = fallbackAtomSelection(makeInputs({ entityType: 'kommanditbolag', atomIndex: ATOM_INDEX }))
+    expect(sel.horizontal_atoms).toEqual([
+      'horizontal/swedish-vat',
+      'horizontal/swedish-invoice-compliance',
+      'horizontal/swedish-year-end-closing',
+      'horizontal/swedish-accounting-compliance',
+      'horizontal/swedish-sie-import-export',
+      'horizontal/swedish-asset-accounting',
+      'horizontal/swedish-hb-kb-beskattning',
+    ])
+    expect(sel.modifier_atoms).toEqual([])
+    expect(sel.verification_questions).not.toContain('Är du ensamägare till företaget?')
+  })
+
+  it('keeps the HB/KB atom away from an enskild firma and an aktiebolag', () => {
+    for (const entityType of ['enskild_firma', 'aktiebolag']) {
+      const sel = fallbackAtomSelection(makeInputs({ entityType, atomIndex: ATOM_INDEX }))
+      expect(sel.horizontal_atoms).not.toContain('horizontal/swedish-hb-kb-beskattning')
+    }
   })
 
   it('gives an unknown form the universal set only', () => {

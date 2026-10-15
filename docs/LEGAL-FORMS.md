@@ -1,6 +1,6 @@
 # Legal Forms: Capability Profiles
 
-A legal form (`EntityType`: `enskild_firma`, `aktiebolag`, `ideell_forening`, next `ekonomisk_forening` and `bostadsrattsforening`) changes what the ledger must do: which equity account a year closes to, whether an owner exists, which tax return is filed, which report exists. This document is the contract for how that variation is expressed in code so that the fourth and fifth form cost one file each, not another sweep of the codebase.
+A legal form (`EntityType`: `enskild_firma`, `aktiebolag`, `ideell_forening`, `kommanditbolag` (fysiska delägare only, beta behind its flag), next `ekonomisk_forening` and `bostadsrattsforening`) changes what the ledger must do: which equity account a year closes to, whether an owner exists, which tax return is filed, which report exists. This document is the contract for how that variation is expressed in code so that the fourth and fifth form cost one file each, not another sweep of the codebase.
 
 Status: proposed 2026-09-17. Merging this document adopts the contract. It applies to every change under `src/lib/company/**` and to every site that today compares `entity_type` to a string.
 

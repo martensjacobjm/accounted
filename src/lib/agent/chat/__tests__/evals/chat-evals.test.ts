@@ -3,8 +3,9 @@ import { join } from 'node:path'
 import { appendFile } from 'node:fs/promises'
 import type { AgentTool } from '@/lib/agent/tools/types'
 import type { StreamEvent } from '../../run-turn'
+import { ATTACHMENT_ONLY_MESSAGE, type ChatAttachmentRef } from '../../attachment-block'
 import { findLeakedAccountNumbers } from '../../output-guards'
-import { KNOWLEDGE_CASES, ACTION_CASES, CLAIMS_DONE, SAYS_CANNOT, RELAYS_WORK_SPLIT, PROPOSAL_CALLED_DONE, type EvalCase } from './cases'
+import { KNOWLEDGE_CASES, ACTION_CASES, ATTACHMENT_CASES, CLAIMS_DONE, SAYS_CANNOT, RELAYS_WORK_SPLIT, PROPOSAL_CALLED_DONE, type EvalCase } from './cases'
 import { fakeSupabase, stubTool, EVAL_COMPANY_ID, EVAL_USER_ID, type AtomRow, type EvalFixtures } from './harness'
 
 // Chat evals against the REAL model: the production system prompt, the real
@@ -29,7 +30,7 @@ interface TurnResult {
   events: StreamEvent[]
 }
 
-let runTurn: (question: string) => Promise<TurnResult>
+let runTurn: (question: string, attachments?: ChatAttachmentRef[]) => Promise<TurnResult>
 
 describe.skipIf(!ENABLED)('chat evals (real model)', () => {
   beforeAll(async () => {
@@ -68,7 +69,7 @@ describe.skipIf(!ENABLED)('chat evals (real model)', () => {
       memory: [{ id: 'mem-1', content: LEAKY_MEMORY, kind: 'fact' }],
     }
 
-    runTurn = async (question: string) => {
+    runTurn = async (question: string, attachments?: ChatAttachmentRef[]) => {
       const events: StreamEvent[] = []
       await runChatTurn({
         supabase: fakeSupabase(fixtures),
@@ -79,7 +80,9 @@ describe.skipIf(!ENABLED)('chat evals (real model)', () => {
         // Same cast as the route: the registry stores intents type-erased.
         intent: generalHelp as unknown as Parameters<typeof runChatTurn>[0]['intent'],
         conversationId: `eval-${Math.random().toString(36).slice(2)}`,
-        userMessage: question,
+        // As the route: an attachment-only turn gets the default sentence.
+        userMessage: question.trim() === '' && attachments?.length ? ATTACHMENT_ONLY_MESSAGE : question,
+        attachments,
         persist: false,
         emit: (e) => {
           events.push(e)
@@ -93,7 +96,7 @@ describe.skipIf(!ENABLED)('chat evals (real model)', () => {
 
   // Concurrent tests must assert through their own context's expect.
   const check = async (c: EvalCase, expect: ExpectStatic) => {
-    const { text, events } = await runTurn(c.question)
+    const { text, events } = await runTurn(c.question, c.attachments)
     const toolUses = events.filter((e) => e.kind === 'tool_use') as Array<{ name: string }>
     const staged = events.filter((e) => e.kind === 'staged_operation') as Array<{ tool_name: string }>
     if (process.env.EVAL_REPORT) {
@@ -131,6 +134,12 @@ describe.skipIf(!ENABLED)('chat evals (real model)', () => {
 
   describe('"gör X": the chat stages the write, the user approves', () => {
     for (const c of ACTION_CASES) {
+      it.concurrent(c.id, ({ expect }) => check(c, expect), TURN_TIMEOUT_MS)
+    }
+  })
+
+  describe('attached receipts and invoices: read first, then propose', () => {
+    for (const c of ATTACHMENT_CASES) {
       it.concurrent(c.id, ({ expect }) => check(c, expect), TURN_TIMEOUT_MS)
     }
   })
